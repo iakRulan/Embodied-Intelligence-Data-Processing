@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Regenerate a threshold file from a clean reference set (with provenance).
 
-python tools/calibrate_reference.py --reference <参考集目录> --output calibration/default_thresholds.json [--episodes 0,1,2]
+python tools/calibrate_reference.py --reference /data/reference --output calibration/custom_thresholds.json [--episodes 0,1,2]
 
 The file records the reference episode IDs, the SHA-256 of every reference
 Parquet and a hash of the threshold values, so any report can state exactly

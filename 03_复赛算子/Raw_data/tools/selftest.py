@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Fault-injection self-test + reference leave-one-episode-out (LOEO).
 
-python tools/selftest.py --reference <参考集目录> --output <新的专用目录> [--base-episodes 12,16,0] [--workers 4]
+python tools/selftest.py --reference /data/reference --output /data/selftest [--base-episodes 12,16,0] [--workers 4]
 
 1. LOEO on the reference set: each fold re-calibrates on the other episodes
    and runs the detector on the held-out one (false-positive check).

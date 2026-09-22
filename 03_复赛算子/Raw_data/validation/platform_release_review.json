@@ -1,0 +1,109 @@
+{
+  "operator": "RefSync-QA-v3.2",
+  "date": "2026-09-22",
+  "baseline_commit": "42bced4a0d108a88f46801b62a7a91583ce1d000",
+  "scope": "Local packaging re-review; no platform login, upload, deployment or effect claim",
+  "unchanged_executable_ast_files": 19,
+  "docstring_only_changed_files": [
+    "run.py",
+    "refsync_qa/cli.py",
+    "tools/calibrate_reference.py",
+    "tools/load_governed.py",
+    "tools/regression_probes.py",
+    "tools/selftest.py"
+  ],
+  "ast_files_checked": 22,
+  "safety_tests": [
+    {
+      "mode": "normal",
+      "unique_tests": 24,
+      "passed": true
+    },
+    {
+      "mode": "optimized",
+      "unique_tests": 24,
+      "passed": true
+    }
+  ],
+  "cli_help_from_other_cwd_passed": true,
+  "source_manifest": [
+    {
+      "file": "run.py",
+      "sha256": "9a5a7df6c027aaa9f22fff6585640151264f7f224aa1ef1d0a33058066af0d89"
+    },
+    {
+      "file": "refsync_qa/__init__.py",
+      "sha256": "5a096136b84a89e8b16a4de89e3e3428506e9d3f54d23a98b7b6afa61e4b1c81"
+    },
+    {
+      "file": "refsync_qa/__main__.py",
+      "sha256": "3129adff95e0f38b87ab34cddfc27082c7892bcaec267ff5d40f160fdf55b44a"
+    },
+    {
+      "file": "refsync_qa/calibrate.py",
+      "sha256": "4bdc43a33f7c75983174537b7aa9529579566c32337075b795bc8b1bdb0d0132"
+    },
+    {
+      "file": "refsync_qa/cli.py",
+      "sha256": "f56a798be2b40196fb0eb7b4895b6c610c919c40932e604220ea68301a23afde"
+    },
+    {
+      "file": "refsync_qa/config.py",
+      "sha256": "0a7594744df11c2e07eeed8783b1e5201262f2b315e4bf54f9f52cdfc05dd278"
+    },
+    {
+      "file": "refsync_qa/dataset.py",
+      "sha256": "d99d1b26b08ef5799c0130cad86435d212bb70206095170e509a08e26e57cb3d"
+    },
+    {
+      "file": "refsync_qa/detect.py",
+      "sha256": "a3cd5978a84df67bf90fc0df785248defdbc94ad224891c7e12ad456ac8bf9e2"
+    },
+    {
+      "file": "refsync_qa/features.py",
+      "sha256": "ea7f6d50e430b5e5ad6c3c84268343417920013820ebba8cb751d71a3989f7ab"
+    },
+    {
+      "file": "refsync_qa/pipeline.py",
+      "sha256": "4980b6145de4a76e83823b1088d464e8da6f19176f0ddf68bdfa7dde990d7f06"
+    },
+    {
+      "file": "refsync_qa/repair.py",
+      "sha256": "f0d7e902160037ecb06143a2dc5095342adc2b188de930145c4e594d385d8ffc"
+    },
+    {
+      "file": "refsync_qa/report.py",
+      "sha256": "8908e0d5266a41d85114bd7c979257c18a96ef8b316a6f782c5fcafb1fd72eb8"
+    },
+    {
+      "file": "refsync_qa/score.py",
+      "sha256": "b4711cc2f0e9c0d8530230a5fc43fdd73c216dd42b9280867e5b3beb54011435"
+    },
+    {
+      "file": "tools/acceptance.py",
+      "sha256": "40105c7a6cf6386778e8e99e41a705dea21aa299ec1b49bd75b58d3e370454a9"
+    },
+    {
+      "file": "tools/calibrate_reference.py",
+      "sha256": "086b9397173fdeef673db5ba6111c161cc1477449f7869af3c3ee8524604e7dc"
+    },
+    {
+      "file": "tools/load_governed.py",
+      "sha256": "934b9116a003ded98baaf7f69b533e0767108026fa0a730a9675d305bd34667a"
+    },
+    {
+      "file": "tools/regression_probes.py",
+      "sha256": "d0d97c797c4d6fc7b04022d7b146e2ece736d857de398c6cf03c36b017f1c2ef"
+    },
+    {
+      "file": "tools/selftest.py",
+      "sha256": "c5dc21738b7e4a27ac100014d2f3c77cb4663d416a934312245e5db5ee73714a"
+    },
+    {
+      "file": "tools/test_safety.py",
+      "sha256": "e6b01d6a131c38c8fdabca774495c462b53cc7c5afd0719a6ed8ffd1f3917bfc"
+    }
+  ],
+  "failures": [],
+  "passed": true
+}

@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
 """Command-line entry.
 
-    python run.py --input <数据集目录> --output <输出目录> [--reference <参考集目录>]
+    python run.py --input /data/test --output /data/result --reference /data/reference
 
 Input/output can also come from environment variables (for platforms that
 start operators without arguments): RSQA_INPUT / INPUT_DIR / DATA_DIR and
 RSQA_OUTPUT / OUTPUT_DIR / RESULT_DIR; RSQA_REFERENCE for the reference set.
 
-If --input contains several LeRobot datasets (e.g. the competition package with
-参考集/ and 测试集/), the one named 参考集/reference/clean is used for calibration
-and every other dataset is processed into its own sub-folder of --output.
+If --input contains several LeRobot datasets, a uniquely named reference,
+clean or ref dataset is used for calibration. Legacy source-folder aliases
+are also recognised. Use explicit --reference and English paths for deployment.
+Every other dataset is processed into its own sub-folder of --output.
 
 Exit codes: 0 ok; 2 bad input or refused input/output overlap; 3 (--strict)
 at least one episode could not be processed (it is still reported as

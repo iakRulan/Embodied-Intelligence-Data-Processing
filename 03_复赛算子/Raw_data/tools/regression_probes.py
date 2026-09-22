@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Regression probes for the boundary cases raised in the v3.0 review (all must PASS).
 
-python tools/regression_probes.py --reference <参考集目录> --output <新的空目录> [--base-episode 12]
+python tools/regression_probes.py --reference /data/reference --output /data/regression [--base-episode 12]
 
 Every probe works on in-memory copies or on synthetic files inside --output
 (a fresh sandbox marked with .refsync_probe); official data is only read.

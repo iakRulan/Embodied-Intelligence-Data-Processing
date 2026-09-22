@@ -2,13 +2,13 @@
 """Read governed training clips: original dataset + RefSync-QA governed overlay.
 
     from tools.load_governed import iter_clips
-    for clip in iter_clips("<原始数据集目录>", "<输出目录>"):
+    for clip in iter_clips("/data/test", "/data/result"):
         clip["table"]   # pyarrow.Table with exactly the clip rows (repaired copy when one exists)
         clip["episode_index"], clip["clip_id"], clip["sample_weight"]
 
 or from the command line (prints a consistency check):
 
-    python tools/load_governed.py --dataset <原始数据集目录> --output <输出目录>
+    python tools/load_governed.py --dataset /data/test --output /data/result
 
 The governed/ folder is an OVERLAY (repaired copies only) and is not a
 loadable LeRobot dataset on its own.  Training must read only the rows listed

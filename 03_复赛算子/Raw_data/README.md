@@ -3,13 +3,13 @@
 面向具身智能多模态训练数据（LeRobot v2.1：三路相机 PNG + 20 维 state/actions + 时间与索引字段）的**质量检测 + 安全治理**算子。
 输入一个数据集目录，输出轨迹级/帧级/区间级检测报告、五维评分卡、逐帧质量掩膜、训练片段、可逆修复副本、逐单元格审计与待人工决定的候选修复。
 
-v3.2 在 v3.1 基础上继续收紧修复与训练准入：保留时间戳残余抖动、拒绝弱相关驱动的图像移位、同任务有序片段去重、图像载荷/原值/schema 审计、修复估计降权和可执行的全量验收。最新结果与限制见 [v3.2 验收与方案说明](../../docs/v3.2验收与方案说明-20260922.md)；v3.1 摘要只作历史对照。
+v3.2 在 v3.1 基础上继续收紧修复与训练准入：保留时间戳残余抖动、拒绝弱相关驱动的图像移位、同任务有序片段去重、图像载荷/原值/schema 审计、修复估计降权和可执行的全量验收。正式说明见 [Algorithm Description](docs/Algorithm_Description_v3_2.md)，平台交付方式见 [Deployment Guide](docs/Deployment_Guide_v3_2.md)。交付包仅使用英文文件名和相对路径，不包含原始数据、凭据或旧版摘要。
 
 ## 1. 快速运行
 
 ```bash
 pip install -r requirements.txt            # numpy / pyarrow / pillow；pandas+openpyxl 仅用于可选 xlsx
-python run.py --input <数据集目录> --output <输出目录>
+python run.py --input /data/test --output /data/result --workers 4 --strict
 ```
 
 | 参数 | 说明 |
@@ -26,7 +26,7 @@ python run.py --input <数据集目录> --output <输出目录>
 | `--options` | JSON 覆盖字段别名、20 维布局、fps、相机—机械臂对应关系等 |
 
 平台无参数启动时可用环境变量：`RSQA_INPUT`（或 `INPUT_DIR`/`DATA_DIR`）、`RSQA_OUTPUT`（或 `OUTPUT_DIR`/`RESULT_DIR`）、`RSQA_REFERENCE`、`RSQA_WORKERS`。
-若 `--input` 下有多个 LeRobot 数据集，只有名称精确匹配“参考集/参考/reference/clean/ref”的唯一数据集才自动用于标定；显式 `--reference` 优先。其他数据集按原相对目录分别输出，避免同名目录覆盖。
+平台部署请使用英文路径，并显式指定 `--input /data/test`、`--reference /data/reference`（可选）。多数据集自动发现支持 `reference/clean/ref` 及历史数据集名称别名；其他数据集按原相对目录分别输出，避免同名目录覆盖。历史名称兼容不代表部署依赖中文路径。
 
 ```python
 from refsync_qa import run
@@ -38,7 +38,7 @@ summary = run("/data/test_set", "/data/result", reference_dir=None, workers=8)
 ## 2. 数据安全保证
 
 - **只读输入**：启动时解析真实路径（含软链接），拒绝输出目录与输入/参考集相同或互相包含；每个修复副本写入前再核对“目标不是任何输入文件”。
-- **输出标记**：输出目录写入 `.refsync_qa_output.json`；数据发现会跳过任何带标记的目录，上次的修复副本不会被当成下一次输入。同一目录再次运行时，旧 `report/`、`governed/` 移到 `_previous_runs/<时间>/`（`--clean-previous` 才删除）。
+- **输出标记**：输出目录写入 `.refsync_qa_output.json`；数据发现会跳过任何带标记的目录，上次的修复副本不会被当成下一次输入。同一目录再次运行时，旧 `report/`、`governed/` 移到 `_previous_runs/<run_id>/`（`--clean-previous` 才删除）。
 - **原子写 + 写后校验**：修复副本先写临时文件，再回读核对每项改动的原值、新值、审计链和 schema；图像审计含 payload SHA-256、长度与 path，int64 不经 float64 比较。未审计改动、伪造原值/新值、未发生的审计均拒绝落盘。SHA-256 证明内容完整性，不证明修复恢复了真实采样状态。
 - **输出保护**：已有 report/governed 必须带算子输出标记才允许归档；拒绝链接子目录；归档名带随机后缀，避免同秒重复运行相互覆盖。
 - **容错**：每条轨迹独立处理；损坏文件、缺字段、非法值、5 帧短轨迹都转为问题码；进程级异常转为 `C_PROCESSING_ERROR` 记录，批次继续。
@@ -70,7 +70,7 @@ summary = run("/data/test_set", "/data/result", reference_dir=None, workers=8)
     meta_patches.csv               元数据补丁
 ```
 
-训练端读取：`python tools/load_governed.py --dataset <原始数据集> --output <输出目录>`（或 `iter_clips()`），按 `clips.csv` 叠加读取原文件/修复副本，验证路径边界、行数、帧号连续、时间单调、掩膜来源和权重。使用显式异常，`python -O` 不会关闭检查。训练窗口不可跨 clip，`min_clip` 应按下游动作窗口长度配置。
+训练端读取：`python tools/load_governed.py --dataset /data/test --output /data/result`（或 `iter_clips()`），按 `clips.csv` 叠加读取原文件/修复副本，验证路径边界、行数、帧号连续、时间单调、掩膜来源和权重。使用显式异常，`python -O` 不会关闭检查。训练窗口不可跨 clip，`min_clip` 应按下游动作窗口长度配置。
 
 ## 4. 检测内容（问题码见 `issue_code_dictionary.csv`）
 
@@ -121,16 +121,16 @@ summary = run("/data/test_set", "/data/result", reference_dir=None, workers=8)
 ```bash
 python tools/test_safety.py
 python -O tools/test_safety.py
-python tools/regression_probes.py --reference <参考集> --output <新探针目录>
-python tools/selftest.py --reference <完整20条参考集> --output <新自测目录> --workers 4
-python tools/acceptance.py --input <完整89条测试集> --reference <完整20条参考集> --output <新全量目录> --workers 4
+python tools/regression_probes.py --reference /data/reference --output /data/regression
+python tools/selftest.py --reference /data/reference --output /data/selftest --workers 4
+python tools/acceptance.py --input /data/test --reference /data/reference --output /data/acceptance --workers 4
 ```
 
 `acceptance.py` 在运行前后核对输入文件 SHA-256，逐个回读修复副本验证审计，并实际加载所有训练片段核对分母。selftest 的缺失时间/抖动恢复用例显式选择 `nominal`，用于验证契约规整功能；默认 conservative 的拒修边界由 `test_safety.py` 单独验证，二者不能混称同一策略。
 
 ## 8. 效率
 
-单次读取 Parquet，每张图只解码一次，数值列走 Arrow 向量化解析；episode 级多进程，异常不拖垮批次。`summary.json.timing` 记录读取→检测→修复→复检→去重→全部 CSV/Parquet/掩膜写出的总耗时、实际解码图像数与硬件信息（本机 2 核 cloud sandbox：8 条 / 9,120 张解码图约 17 s）。计时是诊断日志，不区分冷/热缓存，不作为独立基准。
+每次特征提取单次读取 Parquet、每张图解码一次；修复复检需再次提取并计入解码工作量。数值列走 Arrow 向量化解析，episode 级多进程。v3.2 首轮全量保守日志：Windows 11、Ryzen 7 5800H、31.86 GiB RAM、4 workers，54.74 秒、55,204 次实际解码（含复检）。耗时包含 CSV/Parquet/掩膜写出，不含最后 summary/xlsx 序列化；同期有其他测试且未区分冷/热缓存，只作诊断，不宣称线性扩展或独立吞吐基准。
 
 ## 9. 未覆盖 / 不可评估
 

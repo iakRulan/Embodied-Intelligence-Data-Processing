@@ -20,5 +20,5 @@
 | 帧级原始问题和最终训练掩膜混在同一行未说明阶段 | 增加 issue_stage、final_issue_codes、train_keep_stage | CSV 字段验收 |
 | 默认阈值只有 10 条参考样本 | 改为完整 20 条，保存 ID、SHA-256、阈值哈希 | 默认文件与现场标定结果对照 |
 
-详细数值及证据路径见 [v3.2 验收与方案说明](../../docs/v3.2验收与方案说明-20260922.md)。
+详细数值及证据路径见 [Algorithm Description](docs/Algorithm_Description_v3_2.md)。平台发布使用英文路径和文件名，历史源码工作目录不作为运行依赖。
 历史 validation 下未带 v3.2 的摘要保留版本身份，不当作当前结果。
