@@ -1,0 +1,405 @@
+{
+  "reference_loeo": {
+    "episodes": 10,
+    "defect_false_positives": 0,
+    "details": [
+      {
+        "episode": 0,
+        "defect_codes": [],
+        "value_hints": []
+      },
+      {
+        "episode": 1,
+        "defect_codes": [],
+        "value_hints": []
+      },
+      {
+        "episode": 2,
+        "defect_codes": [],
+        "value_hints": []
+      },
+      {
+        "episode": 3,
+        "defect_codes": [],
+        "value_hints": []
+      },
+      {
+        "episode": 4,
+        "defect_codes": [],
+        "value_hints": []
+      },
+      {
+        "episode": 7,
+        "defect_codes": [],
+        "value_hints": []
+      },
+      {
+        "episode": 12,
+        "defect_codes": [],
+        "value_hints": []
+      },
+      {
+        "episode": 15,
+        "defect_codes": [],
+        "value_hints": []
+      },
+      {
+        "episode": 16,
+        "defect_codes": [],
+        "value_hints": []
+      },
+      {
+        "episode": 17,
+        "defect_codes": [],
+        "value_hints": []
+      }
+    ]
+  },
+  "synthetic": {
+    "cases": 33,
+    "detected": 33,
+    "missed": 0,
+    "rows": [
+      {
+        "episode": 900,
+        "fault": "干净对照",
+        "expected": "",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "整段可用",
+        "final": "价值提示",
+        "repair_check": ""
+      },
+      {
+        "episode": 901,
+        "fault": "timestamp 单点缺失",
+        "expected": "T_TIMESTAMP_INVALID",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "修复后整段可用",
+        "final": "价值提示",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 902,
+        "fault": "index 单点缺失",
+        "expected": "T_INDEX_INVALID",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "修复后整段可用",
+        "final": "价值提示",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 903,
+        "fault": "episode_index 单点缺失",
+        "expected": "S_EPISODE_INDEX_INVALID",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "修复后整段可用",
+        "final": "价值提示",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 904,
+        "fault": "frame_index 单点缺失",
+        "expected": "T_FRAME_INDEX_INVALID",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "切段使用",
+        "final": "需复核",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 905,
+        "fault": "整条换成另一合法任务",
+        "expected": "S_TASK_META_MISMATCH",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "修复后整段可用",
+        "final": "价值提示",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 906,
+        "fault": "±6ms 抖动",
+        "expected": "T_TIMESTAMP_JITTER",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "修复后整段可用",
+        "final": "价值提示",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 907,
+        "fault": "单位 ms",
+        "expected": "T_TIMESTAMP_UNIT_MISMATCH",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "修复后整段可用",
+        "final": "价值提示",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 908,
+        "fault": "整体偏移 3600s",
+        "expected": "T_TIMESTAMP_OFFSET",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "修复后整段可用",
+        "final": "价值提示",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 909,
+        "fault": "掉 5 帧",
+        "expected": "T_FRAME_INDEX_GAP;T_TIMESTAMP_GAP",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "切段使用",
+        "final": "需复核",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 910,
+        "fault": "两帧乱序",
+        "expected": "T_FRAME_ORDER_ERROR;T_TIMESTAMP_NON_MONOTONIC",
+        "detected": true,
+        "other_codes": "J_SPIKE_JUMP;T_FRAME_INDEX_GAP;T_TIMESTAMP_GAP;V_EPISODE_DUPLICATE",
+        "policy": "切段使用",
+        "final": "需复核",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 911,
+        "fault": "episode_index 整条写错",
+        "expected": "S_EPISODE_INDEX_MISMATCH",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "修复后整段可用",
+        "final": "价值提示",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 912,
+        "fault": "元数据长度错",
+        "expected": "T_METADATA_LENGTH_MISMATCH",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "修复后整段可用",
+        "final": "价值提示",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 920,
+        "fault": "左腕晚启动 7 帧并整体前移",
+        "expected": "S_STREAM_SHIFTED",
+        "detected": true,
+        "other_codes": "S_VISUAL_KINEMATIC_LAG;V_EPISODE_DUPLICATE",
+        "policy": "部分修复+切段使用",
+        "final": "需复核",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 921,
+        "fault": "左腕晚启动 12 帧",
+        "expected": "S_SENSOR_LATE_START",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "切段使用",
+        "final": "需复核",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 922,
+        "fault": "左腕早停止 12 帧",
+        "expected": "S_SENSOR_EARLY_STOP",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "切段使用",
+        "final": "需复核",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 923,
+        "fault": "左腕中途断流 10 帧",
+        "expected": "S_SENSOR_DROPOUT",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "切段使用",
+        "final": "需复核",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 924,
+        "fault": "左腕整路缺失",
+        "expected": "S_STREAM_MISSING",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "隔离回采",
+        "final": "需复核",
+        "repair_check": ""
+      },
+      {
+        "episode": 925,
+        "fault": "左腕列缺失",
+        "expected": "C_SCHEMA_MISSING_FIELD",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "文件不可用",
+        "final": "需复核",
+        "repair_check": ""
+      },
+      {
+        "episode": 926,
+        "fault": "主相机黑屏 20 帧",
+        "expected": "C_IMAGE_SCREEN",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "切段使用",
+        "final": "需复核",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 927,
+        "fault": "主相机重复帧 10 帧",
+        "expected": "C_IMAGE_DUPLICATE",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "切段使用",
+        "final": "需复核",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 928,
+        "fault": "主相机模糊 15 帧",
+        "expected": "C_IMAGE_BLUR",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "切段使用",
+        "final": "需复核",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 929,
+        "fault": "右腕画面停滞 15 帧（非字节重复）",
+        "expected": "S_STREAM_FROZEN",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "切段使用",
+        "final": "需复核",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 930,
+        "fault": "2 帧 payload 截断",
+        "expected": "C_IMAGE_DECODE",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "切段使用",
+        "final": "需复核",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 931,
+        "fault": "5 帧分辨率 112",
+        "expected": "C_IMAGE_SHAPE",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "切段使用",
+        "final": "需复核",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 940,
+        "fault": "5 个稀疏 NaN 分量（含 Rot6D/夹爪）",
+        "expected": "J_STATE_NONFINITE",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "修复后整段可用",
+        "final": "价值提示",
+        "repair_check": "OK max|repaired-true|=6.73e-05"
+      },
+      {
+        "episode": 941,
+        "fault": "Rot6D 整条 1e-3 噪声（类 ep81）",
+        "expected": "J_ROT6D_INVALID",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "隔离回采",
+        "final": "需复核",
+        "repair_check": ""
+      },
+      {
+        "episode": 942,
+        "fault": "单帧位置突跳",
+        "expected": "J_POSITION_ENVELOPE;J_SPIKE_JUMP",
+        "detected": true,
+        "other_codes": "J_STATE_ACTION_MISMATCH;V_EPISODE_DUPLICATE",
+        "policy": "修复后整段可用",
+        "final": "价值提示",
+        "repair_check": "OK max|repaired-true|=9.10e-05"
+      },
+      {
+        "episode": 943,
+        "fault": "夹爪越界 5 帧",
+        "expected": "J_GRIPPER_RANGE",
+        "detected": true,
+        "other_codes": "V_EPISODE_DUPLICATE",
+        "policy": "切段使用",
+        "final": "需复核",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 944,
+        "fault": "actions 20 帧偏移 0.3",
+        "expected": "J_STATE_ACTION_MISMATCH",
+        "detected": true,
+        "other_codes": "J_SPIKE_JUMP;V_EPISODE_DUPLICATE",
+        "policy": "切段使用",
+        "final": "需复核",
+        "repair_check": "OK"
+      },
+      {
+        "episode": 945,
+        "fault": "state 冻结",
+        "expected": "V_STATE_FREEZE",
+        "detected": true,
+        "other_codes": "J_STATE_ACTION_MISMATCH;V_EPISODE_DUPLICATE;V_HIGH_IDLE",
+        "policy": "切段使用",
+        "final": "需复核",
+        "repair_check": ""
+      },
+      {
+        "episode": 950,
+        "fault": "文件截断损坏",
+        "expected": "C_FILE_UNREADABLE",
+        "detected": true,
+        "other_codes": "",
+        "policy": "文件不可用",
+        "final": "需复核",
+        "repair_check": ""
+      },
+      {
+        "episode": 960,
+        "fault": "与 900 完全重复",
+        "expected": "V_EPISODE_DUPLICATE",
+        "detected": true,
+        "other_codes": "",
+        "policy": "整段可用",
+        "final": "价值提示",
+        "repair_check": ""
+      },
+      {
+        "episode": 920,
+        "fault": "重对齐逐字节校验",
+        "expected": "rows 7.. 与原始完全一致",
+        "detected": true,
+        "other_codes": "",
+        "policy": "",
+        "final": "",
+        "repair_check": "bytes+path identical=True, head null=True"
+      }
+    ]
+  }
+}

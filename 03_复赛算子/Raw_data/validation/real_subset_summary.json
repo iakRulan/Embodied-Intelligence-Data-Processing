@@ -1,0 +1,117 @@
+{
+  "operator": "RefSync-QA-v3.0",
+  "input": "<初赛数据>/测试集",
+  "calibration": "calibration file default_thresholds.json",
+  "label_note": "无官方逐帧标签时，所有计数均为算法标记、需人工复核的结果，不等同于真实异常数或召回率。",
+  "scope": {
+    "episodes": 7,
+    "readable_episodes": 7,
+    "rows": 1342,
+    "meta_total_frames": 17360,
+    "meta_total_episodes": 89,
+    "cameras": [
+      "image",
+      "left_wrist_image",
+      "right_wrist_image"
+    ],
+    "fps": 10.0
+  },
+  "detection": {
+    "flagged_episodes": 7,
+    "flagged_rate": 1.0,
+    "value_hint_only_episodes": 0,
+    "pass_episodes": 0,
+    "episodes_by_category": {
+      "时序": 3,
+      "同步": 3,
+      "内容结构": 2,
+      "数据价值": 0
+    },
+    "flagged_by_strongest_evidence": {
+      "阈值型需复核": 2,
+      "确定性": 5
+    },
+    "flagged_frames": 955,
+    "flagged_frame_rate": 0.7116,
+    "issue_intervals": 151,
+    "by_code": {
+      "T_TIMESTAMP_JITTER": {
+        "episodes": 3,
+        "frames": 374,
+        "category": "时序",
+        "tier": "阈值型需复核",
+        "description": "timestamp 间隔偏离标称周期（帧率抖动）"
+      },
+      "S_STREAM_SHIFTED": {
+        "episodes": 3,
+        "frames": 559,
+        "category": "同步",
+        "tier": "确定性",
+        "description": "相机流整体错位：图像 path 帧号恒定偏移且对端缺图（晚启动后前移）"
+      },
+      "S_VISUAL_KINEMATIC_LAG": {
+        "episodes": 1,
+        "frames": 0,
+        "category": "同步",
+        "tier": "阈值型需复核",
+        "description": "腕部相机运动与同侧机械臂运动的时滞偏离参考集"
+      },
+      "J_STATE_NONFINITE": {
+        "episodes": 2,
+        "frames": 49,
+        "category": "内容结构",
+        "tier": "确定性",
+        "description": "state 含 NaN/Inf"
+      }
+    },
+    "duplicate_pairs": [],
+    "overlap_pairs": []
+  },
+  "scores": {
+    "mean": 82.9,
+    "median": 80.0,
+    "min": 72.45,
+    "dimension_means": {
+      "structure": 100.0,
+      "temporal": 64.26,
+      "sync": 57.14,
+      "content": 93.11,
+      "value": 100.0
+    }
+  },
+  "governance": {
+    "policy_counts": {
+      "修复后整段可用": 3,
+      "隔离回采": 1,
+      "部分修复+切段使用": 3
+    },
+    "repaired_copies": 7,
+    "flagged_resolved_by_repair": 3,
+    "values_changed": 1179,
+    "repairs_rejected": 1,
+    "usable_frames": {
+      "total": 1177,
+      "修复恢复": 636,
+      "切段新增": 541
+    },
+    "blocked_or_dropped_frames": 165,
+    "min_clip_frames": 30
+  },
+  "dataset_value": {
+    "task_counts": {
+      "0": 3,
+      "1": 4
+    },
+    "task_balance_ratio": 0.75,
+    "task_normalized_entropy": 0.9852,
+    "duplicate_groups": []
+  },
+  "timing": {
+    "detect_and_repair_seconds": 19.49,
+    "total_seconds": 19.5,
+    "workers": 4,
+    "episodes_per_second": 0.359,
+    "images_per_second": 206.5
+  },
+  "headline": "7 条轨迹：需复核 7 条（100.0%），仅价值提示 0 条；逐帧标记 955/1342；修复副本 7 条，其中 3 条复检通过；可训练帧 1177"
+}

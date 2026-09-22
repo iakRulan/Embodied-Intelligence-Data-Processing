@@ -1,0 +1,14 @@
+# 数据与大文件不入库（赛题数据版权归组委会，体积大）
+具身智能多模态数据质量检测算法赛题-初赛数据/
+02_过程数据/
+outputs/
+*.parquet
+*.zip
+*.mp4
+.venv/
+__pycache__/
+*.pyc
+.claude/
+.workbuddy/
+# 算子运行产物
+run_output*/

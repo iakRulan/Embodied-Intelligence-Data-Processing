@@ -1,0 +1,6 @@
+numpy>=1.23
+pyarrow>=12
+pillow>=9.5
+# optional: quality_report.xlsx
+pandas>=1.5
+openpyxl>=3.1
