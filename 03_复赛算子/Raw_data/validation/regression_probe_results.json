@@ -1,0 +1,235 @@
+{
+  "short_xcorr_5_rows": {
+    "pass": true,
+    "detail": "5 行输入返回空结果，不抛异常"
+  },
+  "xcorr_unequal_lengths": {
+    "pass": true,
+    "detail": "长度不等按短者截断"
+  },
+  "numeric_string_corruption": {
+    "pass": true,
+    "detail": {
+      "unparseable_row": true,
+      "dim_ok": true
+    }
+  },
+  "scalar_wrong_shape_reported": {
+    "pass": true,
+    "detail": {
+      "values": [
+        NaN,
+        2.0
+      ],
+      "malformed": [
+        true,
+        false
+      ]
+    }
+  },
+  "short_episode_analyse": {
+    "pass": true,
+    "detail": {
+      "codes": [
+        "T_METADATA_LENGTH_MISMATCH",
+        "V_LOW_VISUAL_DIVERSITY"
+      ],
+      "not_evaluable": [
+        "视觉—本体时滞(image，帧数 5 < 60)",
+        "视觉—本体时滞(left_wrist_image，帧数 5 < 60)",
+        "视觉—本体时滞(right_wrist_image，帧数 5 < 60)"
+      ]
+    }
+  },
+  "worker_exception_becomes_record": {
+    "pass": true,
+    "detail": {
+      "error": "AttributeError: 'NoneType' object has no attribute 'image_columns'"
+    }
+  },
+  "sparse_repair_rejects_frame_gap": {
+    "pass": true,
+    "detail": {
+      "audit": [],
+      "rejected": [
+        "state 稀疏补值：行 49–51 间 frame_index 不连续/无效（跨缺帧或乱序不补值）"
+      ]
+    }
+  },
+  "sparse_repair_rejects_untrusted_neighbour": {
+    "pass": true,
+    "detail": {
+      "neighbour_codes": [
+        "J_POSITION_ENVELOPE"
+      ],
+      "rejected": [
+        "state 稀疏补值：行 60 的邻居 59/61 带有数值/帧序问题码，不作为插值锚点"
+      ]
+    }
+  },
+  "float64_sparse_repair_preservation": {
+    "pass": true,
+    "detail": {
+      "finite_cells_changed": 0,
+      "audit_entries": 1,
+      "verify_problems": [],
+      "dtype_after": "list<item: double>"
+    }
+  },
+  "index_offset_tie_not_repaired": {
+    "pass": true,
+    "detail": {
+      "support": 0.5,
+      "rows_flagged": 172,
+      "rejected": [
+        "index 重建：index−frame_index 偏移众数支持度 50%（需 ≥90% 且唯一），无法唯一确定正确一侧"
+      ]
+    }
+  },
+  "index_offset_dominant_repaired_minimally": {
+    "pass": true,
+    "detail": {
+      "support": 0.9826,
+      "changed_rows": [
+        10,
+        20,
+        30
+      ]
+    }
+  },
+  "post_write_verify_catches_unaudited_change": {
+    "pass": true,
+    "detail": {
+      "problems": [
+        "未审计的改动 task_index@0"
+      ]
+    }
+  },
+  "dedup_non_transitive_keeps_disjoint_episode": {
+    "pass": true,
+    "detail": {
+      "train_frames": {
+        "1": 100,
+        "2": 0,
+        "3": 100
+      },
+      "relations": {
+        "(1, 2)": "包含",
+        "(2, 3)": "包含"
+      }
+    }
+  },
+  "dedup_equivalent_pair_drops_one_copy": {
+    "pass": true,
+    "detail": {
+      "relation": "整轨等价",
+      "policies": {
+        "1": "整段可用",
+        "2": "重复剔除"
+      }
+    }
+  },
+  "dedup_same_images_different_state_not_dropped": {
+    "pass": true,
+    "detail": {
+      "relation": "同源副本",
+      "kinematic_consistency": 0.0,
+      "ep2_train": 100
+    }
+  },
+  "dedup_containment_keeps_superset": {
+    "pass": true,
+    "detail": {
+      "1": [
+        "重复剔除",
+        0
+      ],
+      "2": [
+        "整段可用",
+        160
+      ]
+    }
+  },
+  "dedup_and_task_coverage_in_reports": {
+    "pass": true,
+    "detail": {
+      "policies": {
+        "1": [
+          "整段可用",
+          100
+        ],
+        "2": [
+          "隔离回采",
+          0
+        ],
+        "3": [
+          "整段可用",
+          100
+        ]
+      },
+      "task_counts": {
+        "0": 3,
+        "1": 0
+      },
+      "balance": 0.0
+    }
+  },
+  "output_input_overlap_guard": {
+    "pass": true,
+    "detail": {
+      "refused": [
+        true,
+        true,
+        true
+      ],
+      "source_modified": false
+    }
+  },
+  "marked_output_never_rediscovered_as_input": {
+    "pass": true,
+    "detail": {
+      "unmarked": 1,
+      "marked_output": 0,
+      "sandbox_scan": [
+        "overlap/governed/data/chunk-000/episode_000012.parquet"
+      ]
+    }
+  },
+  "previous_run_archived_not_overwritten": {
+    "pass": true,
+    "detail": {
+      "archived": [
+        "20260922-101357"
+      ]
+    }
+  },
+  "int64_timestamp_schema_and_unit_repair": {
+    "pass": true,
+    "detail": {
+      "codes": "T_TIMESTAMP_UNIT_MISMATCH;C_SCHEMA_DTYPE_MISMATCH",
+      "final": "通过",
+      "dtype_after": "float",
+      "exact_restore": true
+    }
+  },
+  "processing_error_recorded_batch_continues": {
+    "pass": true,
+    "detail": {
+      "errors": [
+        {
+          "episode_index": 12,
+          "error": "RuntimeError: injected failure"
+        }
+      ],
+      "policies": {
+        "处理失败": 1
+      }
+    }
+  },
+  "reference_file_untouched": {
+    "pass": true,
+    "detail": {
+      "sha256": "c68f51bd00455ff3"
+    }
+  }
+}

@@ -22,42 +22,105 @@ from . import config
 _PATH_RE = re.compile(r"frame_(\d+)\.")
 
 
-def _scalar(table, name: str | None, n: int) -> tuple[np.ndarray, bool]:
-    """Column as float64 with NaN for null/unparseable. Returns (values, present)."""
+def _num(v: Any) -> tuple[float, bool]:
+    """(value, well_formed). Accepts real numbers and length-1 lists (declared shape [1])."""
+    if v is None:
+        return math.nan, True
+    if isinstance(v, (list, tuple, np.ndarray)):
+        if len(v) != 1:
+            return math.nan, False
+        v = v[0]
+        if v is None:
+            return math.nan, True
+    if isinstance(v, (bool, np.bool_)) or isinstance(v, (str, bytes, dict)):
+        return math.nan, False
+    try:
+        return float(v), True
+    except (TypeError, ValueError):
+        return math.nan, False
+
+
+def _scalar(table, name: str | None, n: int) -> tuple[np.ndarray, bool, np.ndarray]:
+    """Column as float64 (NaN for null/invalid). Returns (values, present, malformed_rows).
+
+    A malformed value (list of length != 1, string, dict, bool) is never
+    silently reduced to its first element: it becomes NaN and is reported.
+    """
+    bad = np.zeros(n, bool)
     if name is None or name not in table.column_names:
-        return np.full(n, np.nan), False
+        return np.full(n, np.nan), False, bad
+    import pyarrow as pa
+
+    col = table.column(name)
+    if pa.types.is_integer(col.type) or pa.types.is_floating(col.type):
+        import pyarrow.compute as pc
+
+        out = pc.cast(col, pa.float64()).to_numpy(zero_copy_only=False).astype(np.float64)
+        return out, True, bad
     out = np.full(n, np.nan)
-    for i, v in enumerate(table.column(name).to_pylist()):
-        try:
-            if v is None:
-                continue
-            if isinstance(v, (list, tuple, np.ndarray)):
-                v = v[0] if len(v) else None
-                if v is None:
-                    continue
-            out[i] = float(v)
-        except (TypeError, ValueError):
-            pass
-    return out, True
+    for i, v in enumerate(col.to_pylist()):
+        out[i], ok = _num(v)
+        bad[i] = not ok
+    return out, True, bad
 
 
-def _matrix(table, name: str | None, n: int, dim: int | None) -> tuple[np.ndarray, np.ndarray, bool]:
-    """List column as n x dim float64 (NaN padded). Returns (M, dim_ok, present)."""
+def _matrix(table, name: str | None, n: int, dim: int | None) -> tuple[np.ndarray, np.ndarray, bool, np.ndarray]:
+    """List column as n x dim float64 (NaN padded). Returns (M, dim_ok, present, unparseable_rows).
+
+    Fast path for numeric list columns; otherwise each element is parsed on its
+    own so one bad string marks its row instead of aborting the batch.
+    """
+    unp = np.zeros(n, bool)
     if name is None or name not in table.column_names:
         d = dim or 1
-        return np.full((n, d), np.nan), np.zeros(n, bool), False
-    rows = table.column(name).to_pylist()
+        return np.full((n, d), np.nan), np.zeros(n, bool), False, unp
+    import pyarrow as pa
+    import pyarrow.compute as pc
+
+    col = table.column(name).combine_chunks() if n else table.column(name)
+    typ = col.type
+    listy = pa.types.is_list(typ) or pa.types.is_large_list(typ) or pa.types.is_fixed_size_list(typ)
+    if listy and n and (pa.types.is_floating(typ.value_type) or pa.types.is_integer(typ.value_type)):
+        valid = col.is_valid().to_numpy(zero_copy_only=False)
+        lens = pc.list_value_length(col).to_numpy(zero_copy_only=False)
+        lens = np.where(valid, np.nan_to_num(lens.astype(float), nan=-1), -1).astype(int)
+        d = int(dim) if dim else (int(np.bincount(lens[lens >= 0]).argmax()) if (lens >= 0).any() else 1)
+        d = max(d, 1)
+        vals = pc.cast(col.flatten(), pa.float64()).to_numpy(zero_copy_only=False).astype(np.float64)
+        M = np.full((n, d), np.nan)
+        ok = lens == d
+        if ok.any():
+            starts = np.concatenate([[0], np.cumsum(np.maximum(lens, 0))[:-1]])
+            idx = starts[ok][:, None] + np.arange(d)[None, :]
+            M[ok] = vals[idx]
+        return M, ok, True, unp
+    rows = col.to_pylist()
     lens = [len(r) if isinstance(r, (list, tuple)) else -1 for r in rows]
-    d = dim or (max(set(lens), key=lens.count) if lens else 1)
+    good = [x for x in lens if x >= 0]
+    d = dim or (max(set(good), key=good.count) if good else 1)
     d = max(int(d), 1)
     M = np.full((n, d), np.nan)
     ok = np.zeros(n, bool)
     for i, r in enumerate(rows):
         if isinstance(r, (list, tuple)) and len(r) == d:
-            arr = np.array([np.nan if x is None else x for x in r], dtype=np.float64)
-            M[i] = arr
             ok[i] = True
-    return M, ok, True
+            for j, x in enumerate(r):
+                v, fine = _num(x)
+                if isinstance(x, (list, tuple)):
+                    fine = False
+                if not fine:
+                    unp[i] = True
+                    v = math.nan
+                M[i, j] = v
+    return M, ok, True, unp
+
+
+def column_types(table) -> dict[str, str]:
+    """Arrow storage type per column (for schema-contract checks)."""
+    out = {}
+    for f in table.schema:
+        out[f.name] = str(f.type)
+    return out
 
 
 def _image_metrics(raw: bytes | None) -> dict[str, Any] | None:
@@ -172,13 +235,16 @@ def extract(path: str | Path, ctx: dict[str, Any]) -> dict[str, Any]:
     aliases = ctx.get("field_aliases", config.FIELD_ALIASES)
     names = {k: _resolve(v, cols) for k, v in aliases.items()}
     feats["field_names"] = names
+    feats["column_types"] = column_types(table)
     for key in ("timestamp", "frame_index", "episode_index", "index", "task_index"):
-        vals, present = _scalar(table, names[key], n)
+        vals, present, bad = _scalar(table, names[key], n)
         feats[key] = vals
         feats[f"has_{key}"] = present
-    S, s_ok, s_present = _matrix(table, names["state"], n, ctx.get("state_dim"))
-    A, a_ok, a_present = _matrix(table, names["actions"], n, ctx.get("action_dim"))
-    feats.update(state=S, state_dim_ok=s_ok, has_state=s_present, action=A, action_dim_ok=a_ok, has_action=a_present)
+        feats[f"malformed_{key}"] = bad
+    S, s_ok, s_present, s_unp = _matrix(table, names["state"], n, ctx.get("state_dim"))
+    A, a_ok, a_present, a_unp = _matrix(table, names["actions"], n, ctx.get("action_dim"))
+    feats.update(state=S, state_dim_ok=s_ok, has_state=s_present, state_unparseable=s_unp,
+                 action=A, action_dim_ok=a_ok, has_action=a_present, action_unparseable=a_unp)
 
     streams = {}
     missing_streams = []
@@ -206,17 +272,26 @@ def arm_steps(S: np.ndarray, layout: dict[str, Any]) -> dict[str, np.ndarray]:
     return out
 
 
-def xcorr_lags(a: np.ndarray, b: np.ndarray, max_lag: int) -> dict[int, float]:
-    """Pearson corr(a[i], b[i+lag]) for lag in [-max_lag, max_lag]."""
+def xcorr_lags(a: np.ndarray, b: np.ndarray, max_lag: int, min_points: int = 30) -> dict[int, float]:
+    """Pearson corr(a[i], b[i+lag]) for lag in [-L, L], L clipped to the usable length.
+
+    Short or unequal inputs return fewer (possibly zero) lags instead of raising.
+    """
     res: dict[int, float] = {}
-    n = len(a)
-    for lag in range(-max_lag, max_lag + 1):
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    n = min(len(a), len(b))
+    a, b = a[:n], b[:n]
+    L = min(int(max_lag), n - min_points)
+    if L < 0:
+        return res
+    for lag in range(-L, L + 1):
         if lag >= 0:
             x, y = a[: n - lag], b[lag:]
         else:
             x, y = a[-lag:], b[: n + lag]
         m = np.isfinite(x) & np.isfinite(y)
-        if m.sum() < 30:
+        if m.sum() < min_points:
             continue
         xs, ys = x[m], y[m]
         if xs.std() < 1e-12 or ys.std() < 1e-12:

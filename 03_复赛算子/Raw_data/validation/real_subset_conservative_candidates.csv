@@ -1,0 +1,5 @@
+﻿episode_index,issue_code,proposed_action,evidence,not_applied_because
+13,T_TIMESTAMP_JITTER,timestamp = frame_index / fps（按标称周期规整）,frame_index 连续；jitter 容差 0.002s,timestamp_policy=conservative
+17,T_TIMESTAMP_JITTER,timestamp = frame_index / fps（按标称周期规整）,frame_index 连续；jitter 容差 0.002s,timestamp_policy=conservative
+25,T_TIMESTAMP_UNIT_MISMATCH,timestamp = frame_index / fps（按标称周期规整）,frame_index 连续；jitter 容差 0.002s,timestamp_policy=conservative
+73,T_TIMESTAMP_JITTER,timestamp = frame_index / fps（按标称周期规整）,frame_index 连续；jitter 容差 0.002s,timestamp_policy=conservative

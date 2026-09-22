@@ -1,12 +1,12 @@
 {
-  "operator": "RefSync-QA-v3.0",
-  "input": "<初赛数据>/测试集",
-  "calibration": "calibration file default_thresholds.json",
-  "label_note": "无官方逐帧标签时，所有计数均为算法标记、需人工复核的结果，不等同于真实异常数或召回率。",
+  "operator": "RefSync-QA-v3.1",
+  "input": "<项目根>/具身智能多模态数据质量检测算法赛题-初赛数据/初赛数据/测试集",
+  "calibration": "阈值文件 default_thresholds.json（参考集 10 条：[0, 1, 2, 3, 4, 7, 12, 15, 16, 17]）",
+  "label_note": "无官方逐帧标签时，所有计数均为算法标记、需人工复核的结果，不等同于真实异常数或召回率；“未标记”不等于“确认正常”。",
   "scope": {
-    "episodes": 7,
-    "readable_episodes": 7,
-    "rows": 1342,
+    "episodes": 8,
+    "readable_episodes": 8,
+    "rows": 1526,
     "meta_total_frames": 17360,
     "meta_total_episodes": 89,
     "cameras": [
@@ -17,24 +17,31 @@
     "fps": 10.0
   },
   "detection": {
-    "flagged_episodes": 7,
+    "flagged_episodes": 8,
     "flagged_rate": 1.0,
     "value_hint_only_episodes": 0,
-    "pass_episodes": 0,
+    "unflagged_episodes": 0,
     "episodes_by_category": {
-      "时序": 3,
+      "时序": 4,
       "同步": 3,
-      "内容结构": 2,
+      "内容结构": 3,
       "数据价值": 0
     },
     "flagged_by_strongest_evidence": {
       "阈值型需复核": 2,
-      "确定性": 5
+      "确定性": 6
     },
     "flagged_frames": 955,
-    "flagged_frame_rate": 0.7116,
+    "flagged_frame_rate": 0.6258,
     "issue_intervals": 151,
     "by_code": {
+      "C_SCHEMA_DTYPE_MISMATCH": {
+        "episodes": 1,
+        "frames": 0,
+        "category": "内容结构",
+        "tier": "确定性",
+        "description": "字段存储类型与 info.json 声明不一致（值可读，按契约转换后可用）"
+      },
       "T_TIMESTAMP_JITTER": {
         "episodes": 3,
         "frames": 374,
@@ -42,19 +49,19 @@
         "tier": "阈值型需复核",
         "description": "timestamp 间隔偏离标称周期（帧率抖动）"
       },
+      "T_TIMESTAMP_UNIT_MISMATCH": {
+        "episodes": 1,
+        "frames": 0,
+        "category": "时序",
+        "tier": "高置信",
+        "description": "timestamp 采样间隔为标称值的 10/100/1000 倍（疑似单位错误）"
+      },
       "S_STREAM_SHIFTED": {
         "episodes": 3,
         "frames": 559,
         "category": "同步",
         "tier": "确定性",
-        "description": "相机流整体错位：图像 path 帧号恒定偏移且对端缺图（晚启动后前移）"
-      },
-      "S_VISUAL_KINEMATIC_LAG": {
-        "episodes": 1,
-        "frames": 0,
-        "category": "同步",
-        "tier": "阈值型需复核",
-        "description": "腕部相机运动与同侧机械臂运动的时滞偏离参考集"
+        "description": "相机流整体错位：图像 path 帧号恒定偏移且对端缺图（疑似晚启动后前移）"
       },
       "J_STATE_NONFINITE": {
         "episodes": 2,
@@ -64,54 +71,169 @@
         "description": "state 含 NaN/Inf"
       }
     },
-    "duplicate_pairs": [],
-    "overlap_pairs": []
+    "sync_observability": {
+      "索引/覆盖（确定性：path 帧号、缺图分布、索引字段）": {
+        "S_STREAM_SHIFTED": 3
+      },
+      "统计时滞/停滞（阈值型：运动互相关、画面静止）": {},
+      "硬件时钟同步": "不可评估：数据只有单一 timestamp，没有逐传感器独立硬件时间戳，无法实测时钟漂移"
+    },
+    "redundancy_relations": {}
   },
   "scores": {
-    "mean": 82.9,
+    "mean": 83.48,
     "median": 80.0,
     "min": 72.45,
     "dimension_means": {
-      "structure": 100.0,
-      "temporal": 64.26,
-      "sync": 57.14,
-      "content": 93.11,
+      "structure": 98.75,
+      "temporal": 62.48,
+      "sync": 62.5,
+      "content": 93.97,
       "value": 100.0
-    }
+    },
+    "value_not_evaluable_episodes": 0,
+    "note": "每个问题码只计入一个维度；同一物理缺陷可能触发不同维度的多个问题码（多效应），不宣称因果去重。"
   },
   "governance": {
     "policy_counts": {
-      "修复后整段可用": 3,
+      "修复后整段可用": 4,
       "隔离回采": 1,
       "部分修复+切段使用": 3
     },
-    "repaired_copies": 7,
-    "flagged_resolved_by_repair": 3,
-    "values_changed": 1179,
-    "repairs_rejected": 1,
-    "usable_frames": {
-      "total": 1177,
-      "修复恢复": 636,
-      "切段新增": 541
+    "parquet_repaired_copies": 8,
+    "meta_patch_only": 0,
+    "flagged_resolved": {
+      "total": 4,
+      "by_parquet_copy": 4,
+      "by_meta_patch_only": 0
     },
-    "blocked_or_dropped_frames": 165,
-    "min_clip_frames": 30
+    "values_changed": 1362,
+    "repairs_rejected": 1,
+    "repair_candidates": 0,
+    "frame_valid_rows": 1471,
+    "train_frames": {
+      "total": 1361,
+      "修复恢复": 820,
+      "修复+切段": 541
+    },
+    "dedup_lost_frames": 0,
+    "not_trainable_frames": 165,
+    "min_clip_frames": 30,
+    "denominators": "episodes=全部轨迹；train_frames=最终片段内帧；frame_valid=复检后不含阻断码的帧（含不足最短片段的散点，不可直接训练）"
   },
   "dataset_value": {
-    "task_counts": {
+    "declared_tasks": 2,
+    "task_episode_counts": {
+      "0": 3,
+      "1": 5
+    },
+    "task_trainable_episodes": {
       "0": 3,
       "1": 4
     },
-    "task_balance_ratio": 0.75,
-    "task_normalized_entropy": 0.9852,
-    "duplicate_groups": []
+    "task_trainable_frames": {
+      "0": 675,
+      "1": 686
+    },
+    "task_balance_ratio_episodes": 0.6,
+    "task_normalized_entropy_episodes": 0.9544,
+    "task_balance_ratio_trainable_frames": 0.984,
+    "task_normalized_entropy_trainable_frames": 1.0,
+    "equivalent_duplicate_pairs": [],
+    "note": "均衡度/熵基于 tasks.jsonl 全部声明任务（缺失任务计 0；少于 2 个任务为不可评估）；视觉多样性为 aHash 代理，不等于语义场景覆盖。"
   },
+  "coverage_limits": [
+    "硬件时间同步/时钟漂移：无独立逐传感器时间戳，不可评估（只报告索引覆盖与统计时滞）",
+    "花屏/遮挡：无专门正样本评测，仅由黑白屏、解码、模糊、停滞规则间接覆盖",
+    "任务成功率/碰撞等下游指标：未验证，数据价值为运动/视觉代理指标",
+    "位置/夹爪边界为固定工程值（参考集观测范围见 thresholds_used.json 的 _reference_observed_ranges），不是学习包络或硬件实测"
+  ],
+  "headline": "8 条轨迹：需复核 8 条（100.0%），仅价值提示 0 条，未被规则标记 0 条；帧级问题码命中 955/1526 行；Parquet 修复副本 8 条 + 仅元数据补丁 0 条，原需复核且治理后不再需复核 4 条（Parquet 4 + 元数据 0）；最终训练片段帧 1361",
+  "calibration_provenance": {
+    "thresholds_sha256": "c3a579ca85f778e9747a99824b16ebd7e8139d6d0465763f94d486936cb9a313",
+    "reference_episode_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      7,
+      12,
+      15,
+      16,
+      17
+    ],
+    "reference_files": [
+      {
+        "episode_index": 0,
+        "file": "episode_000000.parquet",
+        "sha256": "61edb7e5f342c162fbc599650dbc168b9a6df090164ab50df1cd8186a693b706"
+      },
+      {
+        "episode_index": 1,
+        "file": "episode_000001.parquet",
+        "sha256": "f69fdb59e9e1b61e1d41cae5011e5dde055c43c2116f9efc1e24d4bd25da1e84"
+      },
+      {
+        "episode_index": 2,
+        "file": "episode_000002.parquet",
+        "sha256": "7d42f38cfcb3f9d5b670b1cdd409fda22773a114ca5847f9ff50d0b6f3380f0e"
+      },
+      {
+        "episode_index": 3,
+        "file": "episode_000003.parquet",
+        "sha256": "65ca1cf7c60a3d2de62f428c80a3dce99035e9bfb7edf0c9b32a4a44d9027ee9"
+      },
+      {
+        "episode_index": 4,
+        "file": "episode_000004.parquet",
+        "sha256": "3fb2a1fbcf8d6b06896c662a9a3bbc2eb27359e309dcbdfdc57079a0d3f33022"
+      },
+      {
+        "episode_index": 7,
+        "file": "episode_000007.parquet",
+        "sha256": "d09d9d14848dd90041c2738d1c7bac0a0e60dc66b26e9c89d656642bd9532291"
+      },
+      {
+        "episode_index": 12,
+        "file": "episode_000012.parquet",
+        "sha256": "c68f51bd00455ff33bff72c5ba0cd31661a949f3be9bc7a17b77585f78233ab5"
+      },
+      {
+        "episode_index": 15,
+        "file": "episode_000015.parquet",
+        "sha256": "f2f38476f19dde9ba0ce6b811ba21b0f120968dd1705eefb5d32cf3963f57194"
+      },
+      {
+        "episode_index": 16,
+        "file": "episode_000016.parquet",
+        "sha256": "5024530d39c7358b9522c38bdf135a7a243f6820f02b1db07eb6646a766df771"
+      },
+      {
+        "episode_index": 17,
+        "file": "episode_000017.parquet",
+        "sha256": "cdb7a43bddc77e014ffa6e33d355dfc9533d2595d5361e53bce4e4c6785eb58d"
+      }
+    ],
+    "operator": "RefSync-QA-v3.1"
+  },
+  "processing_errors": [],
   "timing": {
-    "detect_and_repair_seconds": 19.49,
-    "total_seconds": 19.5,
+    "detect_repair_recheck_seconds": 17.02,
+    "total_seconds_incl_all_csv_parquet_outputs": 17.08,
     "workers": 4,
-    "episodes_per_second": 0.359,
-    "images_per_second": 206.5
-  },
-  "headline": "7 条轨迹：需复核 7 条（100.0%），仅价值提示 0 条；逐帧标记 955/1342；修复副本 7 条，其中 3 条复检通过；可训练帧 1177"
+    "episodes": 8,
+    "rows": 1526,
+    "images_decoded": 9120,
+    "episodes_per_second": 0.468,
+    "decoded_images_per_second": 534.1,
+    "hardware": {
+      "platform": "Linux (cloud sandbox)",
+      "processor": "x86_64",
+      "cpu_count": 2,
+      "python": "3.11.15",
+      "memory_gib": 7.8
+    },
+    "note": "计时包含读取、检测、修复、复检、去重与全部 CSV/Parquet/掩膜写出；summary/xlsx 序列化在其后；冷/热缓存未区分。"
+  }
 }

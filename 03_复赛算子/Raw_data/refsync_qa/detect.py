@@ -84,6 +84,74 @@ def _full_step(M: np.ndarray) -> np.ndarray:
     return st
 
 
+def screen_mask(sf: dict[str, Any], thr: dict[str, Any]) -> np.ndarray:
+    return sf["decode_ok"] & (
+        (sf["dark"] >= thr["screen_dark_fraction"]) | (sf["bright"] >= thr["screen_bright_fraction"]) | (sf["std"] <= thr["screen_std_luma"])
+    )
+
+
+def dup_mask(sf: dict[str, Any], screen: np.ndarray) -> np.ndarray:
+    """Byte-identical to the previous row (non-solid)."""
+    n = len(sf["decode_ok"])
+    dec, sha = sf["decode_ok"], sf["sha1"]
+    dup = np.zeros(n, bool)
+    for i in range(1, n):
+        if dec[i] and dec[i - 1] and sha[i] and sha[i] == sha[i - 1] and not screen[i]:
+            dup[i] = True
+    return dup
+
+
+def frozen_runs(sf: dict[str, Any], mv: np.ndarray, thr: dict[str, Any]) -> list[tuple[int, int, int]]:
+    """Static-picture runs while the arm moves: (first_row, last_row, frames).
+
+    A run of r consecutive low-motion differences spans r + 1 frames (the
+    first static frame plus r repeats); detection and calibration both use
+    this frame count, so thresholds and injected durations share one unit.
+    """
+    screen = screen_mask(sf, thr)
+    frozen = sf["decode_ok"] & ~screen & ~dup_mask(sf, screen) & (sf["motion"] < thr["freeze_motion"])
+    moving = np.isfinite(mv) & (mv > thr["arm_moving_step"])
+    out = []
+    for a, b in _runs(frozen):
+        if moving[a : b + 1].mean() >= 0.5:
+            out.append((a, b, b - a + 2))
+    return out
+
+
+def sf_motion(streams: dict[str, Any], col: str) -> np.ndarray:
+    return streams[col]["motion"]
+
+
+_ARROW_NAME = {"float32": "float", "float64": "double", "float16": "halffloat", "int64": "int64", "int32": "int32",
+               "int16": "int16", "int8": "int8", "uint8": "uint8", "bool": "bool", "string": "string"}
+
+
+def dtype_mismatches(col_types: dict[str, str], info: dict[str, Any]) -> list[str]:
+    """Columns whose Arrow storage type differs from the dtype/shape declared in info.json."""
+    import re
+
+    out = []
+    spec_all = info.get("features", {}) if isinstance(info.get("features"), dict) else {}
+    for name, spec in spec_all.items():
+        if not isinstance(spec, dict) or name not in col_types:
+            continue
+        dt = str(spec.get("dtype", ""))
+        want = _ARROW_NAME.get(dt)
+        if want is None:
+            continue
+        shape = spec.get("shape") or [1]
+        actual = col_types[name]
+        multi = int(np.prod([int(x) for x in shape])) > 1
+        if multi:
+            m = re.match(r"^(?:large_)?(?:fixed_size_)?list<(?:element|item): (\w+)>", actual)
+            base = m.group(1) if m else actual
+        else:
+            base = actual
+        if base != want:
+            out.append(f"{name}: 存储 {actual}，声明 {dt}{list(shape) if multi else ''}")
+    return out
+
+
 def analyse(feats: dict[str, Any], ep_id: int, ds, thr: dict[str, Any], opts: dict[str, Any]) -> Result:
     layout = opts.get("layout", config.DEFAULT_LAYOUT)
     n = int(feats.get("n", 0))
@@ -106,6 +174,18 @@ def analyse(feats: dict[str, Any], ep_id: int, ds, thr: dict[str, Any], opts: di
     missing += list(feats.get("missing_stream_columns", []))
     if missing:
         R.ep("C_SCHEMA_MISSING_FIELD", "缺失字段: " + ",".join(missing))
+    dmis = dtype_mismatches(feats.get("column_types", {}), ds.info or {})
+    if dmis:
+        R.ep("C_SCHEMA_DTYPE_MISMATCH", "；".join(dmis))
+        R.metrics["dtype_mismatch"] = dmis
+    for key in ("timestamp", "frame_index", "episode_index", "index", "task_index"):
+        bad = feats.get(f"malformed_{key}")
+        if bad is not None and bad.any():
+            R.row(bad, "C_FIELD_INVALID", key)
+    for key, name in (("state_unparseable", "state"), ("action_unparseable", "actions")):
+        bad = feats.get(key)
+        if bad is not None and bad.any():
+            R.row(bad, "J_VALUE_UNPARSEABLE", name)
 
     fps = float(ds.fps)
     dt_nom = 1.0 / fps
@@ -113,14 +193,15 @@ def analyse(feats: dict[str, Any], ep_id: int, ds, thr: dict[str, Any], opts: di
 
     # ---------------- 时序 ----------------
     ts, fi, gi = feats["timestamp"], feats["frame_index"], feats["index"]
+    zero = np.zeros(n, bool)
     if feats.get("has_timestamp"):
-        R.row(~np.isfinite(ts), "T_TIMESTAMP_INVALID")
+        R.row(~np.isfinite(ts) & ~feats.get("malformed_timestamp", zero), "T_TIMESTAMP_INVALID")
     fi_ok = _is_int(fi) & (fi >= 0)
     if feats.get("has_frame_index"):
-        R.row(~fi_ok, "T_FRAME_INDEX_INVALID")
+        R.row(~fi_ok & ~feats.get("malformed_frame_index", zero), "T_FRAME_INDEX_INVALID")
     gi_ok = _is_int(gi)
     if feats.get("has_index"):
-        R.row(~gi_ok, "T_INDEX_INVALID")
+        R.row(~gi_ok & ~feats.get("malformed_index", zero), "T_INDEX_INVALID")
 
     unit_mismatch = False
     if feats.get("has_timestamp") and n > 1:
@@ -135,6 +216,7 @@ def analyse(feats: dict[str, Any], ep_id: int, ds, thr: dict[str, Any], opts: di
             for scale in (10.0, 100.0, 1000.0, 0.1, 0.01, 0.001):
                 if abs(ratio - scale) / scale < 0.05 and frames_consecutive and np.all(valid_dt > 0):
                     unit_mismatch = True
+                    R.metrics["timestamp_unit_scale"] = scale
                     R.ep("T_TIMESTAMP_UNIT_MISMATCH", f"采样间隔中位数为标称值的 {ratio:.3g} 倍")
                     break
         R.row(np.isfinite(dt) & (dt <= 0), "T_TIMESTAMP_NON_MONOTONIC")
@@ -162,10 +244,23 @@ def analyse(feats: dict[str, Any], ep_id: int, ds, thr: dict[str, Any], opts: di
         both = fi_ok & gi_ok
         if both.sum() >= 2:
             off = gi[both] - fi[both]
-            c = Counter(off.tolist()).most_common(1)[0][0]
-            R.metrics["index_offset"] = c
-            bad = both & (np.abs((gi - fi) - c) > 0)
-            R.row(bad, "T_INDEX_DISCONTINUITY")
+            top = Counter(off.tolist()).most_common(2)
+            c, cnt = top[0]
+            support = cnt / float(both.sum())
+            unique = len(top) == 1 or top[1][1] < cnt
+            R.metrics["index_offset_support"] = round(support, 4)
+            if unique and support >= float(opts.get("index_offset_detect_support", 0.6)):
+                R.metrics["index_offset"] = c
+                R.metrics["index_offset_unique"] = True
+                bad = both & (np.abs((gi - fi) - c) > 0)
+                R.row(bad, "T_INDEX_DISCONTINUITY")
+            elif len(top) > 1:
+                # no dominant offset: which side is right cannot be decided -> every row is suspect
+                R.metrics["index_offset"] = None
+                R.metrics["index_offset_unique"] = False
+                R.row(both, "T_INDEX_DISCONTINUITY", f"偏移不唯一(众数支持度{support:.0%})")
+            else:
+                R.metrics["index_offset"] = c
     if meta is not None and meta.get("length") is not None:
         try:
             mlen = int(meta["length"])
@@ -221,6 +316,11 @@ def analyse(feats: dict[str, Any], ep_id: int, ds, thr: dict[str, Any], opts: di
     exp_shape = ds.expected_image_shape  # (H, W, C)
     blur_thr = thr.get("blur", {})
     R.metrics["streams"] = {}
+    cam_arm = layout.get("camera_arm", {})
+    max_lag = int(opts.get("max_lag_search", 12))
+    frames_consecutive = bool(n > 0 and fi_ok.all() and np.all(np.diff(fi) == 1))
+    both_arms = np.fmax.reduce(np.vstack(list(steps.values())), axis=0) if steps else np.full(n, np.nan)
+    shifted: dict[str, int] = {}
     for col, sf in feats.get("streams", {}).items():
         sm: dict[str, Any] = {}
         P = sf["present"]
@@ -230,7 +330,7 @@ def analyse(feats: dict[str, Any], ep_id: int, ds, thr: dict[str, Any], opts: di
             R.ep("S_STREAM_MISSING", f"{col} 整条无图像")
             R.metrics["streams"][col] = {"coverage": "missing"}
             continue
-        # path / coverage analysis
+        # path / coverage analysis (索引/覆盖证据)
         shift_k = None
         has_pf = P & np.isfinite(pf) & fi_ok
         deltas = (pf - fi)[has_pf]
@@ -244,8 +344,11 @@ def analyse(feats: dict[str, Any], ep_id: int, ds, thr: dict[str, Any], opts: di
                 shift_k = k
         if shift_k is not None:
             R.row(np.ones(n, bool), "S_STREAM_SHIFTED", col)
-            R.ep("S_STREAM_SHIFTED", f"{col} 图像内容整体偏移 {shift_k:+d} 帧，对端缺 {abs(shift_k)} 帧")
+            R.ep("S_STREAM_SHIFTED", f"{col} 图像 path 帧号整体偏移 {shift_k:+d} 帧，对端缺 {abs(shift_k)} 帧")
             sm["shift_frames"] = shift_k
+            sm["shift_path_complete"] = bool(has_pf.sum() == P.sum())
+            sm["shift_frames_consecutive"] = frames_consecutive
+            shifted[col] = shift_k
         else:
             R.row(has_pf & ((pf - fi) != 0), "S_IMAGE_PATH_MISMATCH", col)
             for a, b in _runs(miss):
@@ -264,15 +367,9 @@ def analyse(feats: dict[str, Any], ep_id: int, ds, thr: dict[str, Any], opts: di
         else:
             shape_bad = np.zeros(n, bool)
         R.row(shape_bad, "C_IMAGE_SHAPE", col)
-        screen = dec & (
-            (sf["dark"] >= thr["screen_dark_fraction"]) | (sf["bright"] >= thr["screen_bright_fraction"]) | (sf["std"] <= thr["screen_std_luma"])
-        )
+        screen = screen_mask(sf, thr)
         R.row(screen, "C_IMAGE_SCREEN", col)
-        sha = sf["sha1"]
-        dup = np.zeros(n, bool)
-        for i in range(1, n):
-            if dec[i] and dec[i - 1] and sha[i] and sha[i] == sha[i - 1] and not screen[i]:
-                dup[i] = True
+        dup = dup_mask(sf, screen)
         R.row(dup, "C_IMAGE_DUPLICATE", col)
         bt = blur_thr.get(col)
         if bt:
@@ -283,37 +380,85 @@ def analyse(feats: dict[str, Any], ep_id: int, ds, thr: dict[str, Any], opts: di
             R.row(blur, "C_IMAGE_BLUR", col)
         else:
             R.not_evaluable.append(f"模糊检测({col} 无参考标定)")
-        # frozen stream while its arm moves (solid-colour frames excluded: they are C_IMAGE_SCREEN)
-        arm = layout.get("camera_arm", {}).get(col, None)
+        # frozen stream while its arm moves (solid-colour / byte-identical frames excluded)
+        arm = cam_arm.get(col, None)
         if layout_ok and steps:
-            if arm in steps:
-                mv = steps[arm]
-            else:
-                mv = np.fmax.reduce(np.vstack(list(steps.values())), axis=0) if steps else np.full(n, np.nan)
-            frozen = dec & ~screen & ~dup & (sf["motion"] < thr["freeze_motion"])  # byte-identical repeats are C_IMAGE_DUPLICATE
-            moving = np.isfinite(mv) & (mv > thr["arm_moving_step"])
+            mv = steps[arm] if arm in steps else both_arms
             fz = np.zeros(n, bool)
-            for a, b in _runs(frozen):
-                if b - a + 1 >= thr["freeze_min_run"] and moving[a : b + 1].mean() >= 0.5:
+            for a, b, frames in frozen_runs(sf, mv, thr):
+                if frames >= thr["freeze_min_run"]:
                     fz[a : b + 1] = True
             if fz.any():
                 R.row(fz, "S_STREAM_FROZEN", col)
-            # visual–kinematic lag (wrist cameras only)
+            # statistical visual–kinematic lag (统计时滞证据; not a hardware clock measurement)
             ref_lag = thr.get("vk_ref_lag", {}).get(col)
-            if arm in steps and ref_lag is not None:
-                lags = xcorr_lags(sf["motion"], steps[arm], int(opts.get("max_lag_search", 12)))
+            if ref_lag is not None and n >= int(opts.get("vk_min_frames", 60)):
+                lags = xcorr_lags(sf["motion"], mv, max_lag)
                 if lags:
                     best = max(lags, key=lags.get)
                     r_b, r_0 = lags[best], lags.get(int(ref_lag), float("nan"))
                     sm.update(vk_best_lag=best, vk_r=round(r_b, 3), vk_r_at_ref=round(r_0, 3) if math.isfinite(r_0) else None,
-                              vk_implied_shift=int(best - ref_lag))
-                    if (
-                        abs(best - ref_lag) >= thr["vk_lag_tol"]
-                        and r_b >= thr["vk_min_r"]
-                        and (not math.isfinite(r_0) or r_b - r_0 >= thr["vk_min_gain"])
-                    ):
-                        R.ep("S_VISUAL_KINEMATIC_LAG", f"{col} 与本臂运动最佳时滞 {best:+d} 帧（参考 {ref_lag:+d}，r={r_b:.2f}）")
+                              vk_gain=round(r_b - r_0, 3) if math.isfinite(r_0) else None, vk_implied_shift=int(best - ref_lag),
+                              vk_is_wrist=arm in steps)
+            elif ref_lag is not None:
+                R.not_evaluable.append(f"视觉—本体时滞({col}，帧数 {n} < {opts.get('vk_min_frames', 60)})")
         R.metrics["streams"][col] = sm
+
+    # --- independent content evidence for path-shifted streams (gates automatic re-alignment) ---
+    streams_f = feats.get("streams", {})
+    for col, k in shifted.items():
+        sm = R.metrics["streams"][col]
+        ev = []
+        if "vk_best_lag" in sm:
+            wrist = bool(sm.get("vk_is_wrist"))
+            gain = sm.get("vk_gain")
+            min_r = thr["shift_wrist_min_r"] if wrist else thr["shift_scene_min_r"]
+            min_g = thr["shift_wrist_min_gain"] if wrist else thr["shift_scene_min_gain"]
+            ev.append({"method": "本臂运动时滞" if wrist else "双臂运动时滞(场景相机)", "tier": "中" if wrist else "弱",
+                       "implied": sm["vk_implied_shift"], "r": sm["vk_r"], "gain": gain,
+                       "qualifies": bool(abs(sm["vk_implied_shift"] - k) <= 1 and sm["vk_r"] >= min_r and gain is not None and gain >= min_g),
+                       "agrees": abs(sm["vk_implied_shift"] - k) <= 1})
+        for other, of in streams_f.items():
+            if other == col or other in shifted or not of["present"].any() or n < int(opts.get("vk_min_frames", 60)):
+                continue
+            l0 = int(thr.get("xcam_ref_lag", {}).get(f"{col}|{other}", 0))
+            lags = xcorr_lags(sf_motion(streams_f, col), sf_motion(streams_f, other), max_lag)
+            if not lags:
+                continue
+            best = max(lags, key=lags.get)
+            r_b, r_0 = lags[best], lags.get(l0, float("nan"))
+            implied = best - l0  # corr(x[i], y[i+lag]) with x = this (shifted by k) stream
+            gain = r_b - r_0 if math.isfinite(r_0) else None
+            ev.append({"method": f"跨相机运动相关({other})", "tier": "弱", "implied": int(implied), "r": round(r_b, 3),
+                       "gain": round(gain, 3) if gain is not None else None,
+                       "qualifies": bool(abs(implied - k) <= 1 and r_b >= thr["shift_scene_min_r"] and gain is not None and gain >= thr["shift_scene_min_gain"]),
+                       "agrees": abs(implied - k) <= 1})
+        sm["shift_evidence"] = ev
+
+    # --- visual–kinematic lag rule on wrist streams not explained by a path shift ---
+    wrist = {c: m for c, m in R.metrics["streams"].items() if m.get("vk_is_wrist") and "vk_best_lag" in m}
+    free = {}
+    for c, m in wrist.items():
+        if c in shifted and abs(m["vk_implied_shift"] - shifted[c]) <= 1:
+            continue  # explained by the path shift (reported as S_STREAM_SHIFTED)
+        free[c] = m
+
+    def _qual(m: dict[str, Any], tol: float, min_r: float, min_g: float) -> bool:
+        g = m.get("vk_gain")
+        return abs(m["vk_implied_shift"]) >= tol and m["vk_r"] >= min_r and (g is None or g >= min_g)
+
+    strong = {c: m for c, m in free.items() if _qual(m, thr["vk_lag_tol"], thr["vk_min_r"], thr["vk_min_gain"])}
+    devs = [m["vk_implied_shift"] for m in strong.values()]
+    all_wrists = [c for c, a in cam_arm.items() if a in steps and c in streams_f]
+    if len(all_wrists) >= 2 and len(strong) == len(all_wrists) and max(devs) - min(devs) <= 1 and len(free) == len(all_wrists):
+        R.ep("S_VISUAL_KINEMATIC_LAG", "两路腕部相机一致偏离参考时滞：" + "，".join(
+            f"{c} 最佳 {m['vk_best_lag']:+d}（参考 {m['vk_best_lag'] - m['vk_implied_shift']:+d}，r={m['vk_r']:.2f}）" for c, m in strong.items()))
+        R.metrics["vk_common_offset"] = int(round(float(np.median(devs))))
+    else:
+        for c, m in free.items():
+            if _qual(m, thr["cam_lag_tol"], thr["cam_lag_min_r"], thr["cam_lag_min_gain"]):
+                R.ep("S_CAMERA_LAG_SUSPECT", f"{c} 与本臂运动最佳时滞 {m['vk_best_lag']:+d}（参考 {m['vk_best_lag'] - m['vk_implied_shift']:+d}，"
+                                             f"r={m['vk_r']:.2f}，增益 {m.get('vk_gain')}）")
 
     # ---------------- 内容: joint values ----------------
     for name, M, dim_ok, fin, code_nf in (
@@ -383,7 +528,6 @@ def analyse(feats: dict[str, Any], ep_id: int, ds, thr: dict[str, Any], opts: di
     fin_s = np.isfinite(s_step)
     fin_a = np.isfinite(a_step)
     both = fin_s & fin_a
-    decoded_any = any(sf["decode_ok"].any() for sf in feats.get("streams", {}).values())
     if both.sum() >= 5:
         sp, ap = float(np.nansum(s_step)), float(np.nansum(a_step))
         R.metrics.update(state_path=round(sp, 4), action_path=round(ap, 4))
@@ -402,17 +546,23 @@ def analyse(feats: dict[str, Any], ep_id: int, ds, thr: dict[str, Any], opts: di
             R.ep("V_LOW_INTERACTION", f"交互运动帧占比 {inter.mean():.1%}")
     else:
         R.not_evaluable.append("运动价值代理(state/actions 有效帧不足)")
-    if decoded_any:
-        divs = []
-        for sf in feats["streams"].values():
-            h = [x for x, d in zip(sf["ahash"], sf["decode_ok"]) if d and x]
-            if h:
-                divs.append(len(set(h)) / len(h))
-        div = float(np.mean(divs)) if divs else float("nan")
-        R.metrics["visual_diversity"] = round(div, 4) if math.isfinite(div) else None
-        if math.isfinite(div) and div < thr["visual_diversity_low"]:
-            R.ep("V_LOW_VISUAL_DIVERSITY", f"画面多样性 {div:.3f}")
-    else:
-        R.not_evaluable.append("视觉多样性(无可解码图像)")
-    R.metrics["value_evaluable"] = bool(both.sum() >= 5 and decoded_any)
+    # visual proxy per declared camera; a missing/undecodable camera is 不可评估, never a full score
+    comps = {"运动(state/actions)": bool(both.sum() >= 5)}
+    divs = []
+    for col in ds.image_columns:
+        sf = feats.get("streams", {}).get(col)
+        h = [x for x, d in zip(sf["ahash"], sf["decode_ok"]) if d and x] if sf is not None else []
+        comps[f"视觉({col})"] = len(h) >= 5
+        if len(h) >= 5:
+            divs.append(len(set(h)) / len(h))
+        else:
+            R.not_evaluable.append(f"视觉多样性({col} 无足够可解码图像)")
+    div = float(np.mean(divs)) if divs else float("nan")
+    R.metrics["visual_diversity"] = round(div, 4) if math.isfinite(div) else None
+    if math.isfinite(div) and div < thr["visual_diversity_low"]:
+        R.ep("V_LOW_VISUAL_DIVERSITY", f"画面多样性 {div:.3f}（{len(divs)}/{len(ds.image_columns)} 路相机）")
+    R.metrics["value_components"] = comps
+    R.metrics["value_coverage"] = f"{sum(comps.values())}/{len(comps)}"
+    R.metrics["value_evaluable"] = bool(all(comps.values()))
+    R.metrics["value_partially_evaluable"] = bool(any(comps.values()))
     return R

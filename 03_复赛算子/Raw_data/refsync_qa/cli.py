@@ -10,6 +10,10 @@ RSQA_OUTPUT / OUTPUT_DIR / RESULT_DIR; RSQA_REFERENCE for the reference set.
 If --input contains several LeRobot datasets (e.g. the competition package with
 参考集/ and 测试集/), the one named 参考集/reference/clean is used for calibration
 and every other dataset is processed into its own sub-folder of --output.
+
+Exit codes: 0 ok; 2 bad input or refused input/output overlap; 3 (--strict)
+at least one episode could not be processed (it is still reported as
+C_PROCESSING_ERROR and every other episode is processed).
 """
 from __future__ import annotations
 
@@ -34,12 +38,15 @@ def _env(*names: str) -> str | None:
 
 
 def _lerobot_roots(p: Path) -> list[Path]:
+    from .dataset import is_under, marked_dirs
+
     if (p / "meta" / "info.json").exists():
         return [p]
+    marks = marked_dirs(p)
     roots = []
     for info in sorted(p.rglob("meta/info.json")):
         root = info.parent.parent
-        if not (set(root.parts) & _SKIP) and any((root / "data").rglob("*.parquet")):
+        if not (set(root.parts) & _SKIP) and not is_under(root, marks) and any((root / "data").rglob("*.parquet")):
             roots.append(root)
     return roots
 
@@ -57,6 +64,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--min-clip", type=int, default=None, help="训练片段最短帧数（默认 30）")
     ap.add_argument("--options", default=None, help="可选：JSON 文件，覆盖字段别名/20 维布局/fps 等配置")
     ap.add_argument("--limit", type=int, default=None, help="调试用：只处理前 N 条轨迹")
+    ap.add_argument("--timestamp-policy", choices=["nominal", "conservative", "off"], default=None,
+                    help="时间戳修复策略：nominal=按 LeRobot 契约 frame_index/fps 规整（默认）；conservative=只做单位换算/基准归零等无损变换；off=不改时间戳")
+    ap.add_argument("--clean-previous", action="store_true", help="删除（而非归档）同一输出目录中上次运行的 report/governed（仅当目录有输出标记）")
+    ap.add_argument("--strict", action="store_true", help="任一轨迹处理异常时返回退出码 3（异常轨迹仍记录为 C_PROCESSING_ERROR）")
     a = ap.parse_args(argv)
     if not a.input or not a.output:
         ap.error("--input 与 --output 必填（或设置环境变量 RSQA_INPUT / RSQA_OUTPUT）")
@@ -67,7 +78,11 @@ def main(argv: list[str] | None = None) -> int:
         opts["min_clip_frames"] = a.min_clip
     if a.no_dedup:
         opts["dedup"] = False
-    from .pipeline import run
+    if a.timestamp_policy:
+        opts["timestamp_policy"] = a.timestamp_policy
+    if a.clean_previous:
+        opts["clean_previous"] = True
+    from .pipeline import PathGuardError, run
 
     inp, out = Path(a.input), Path(a.output)
     if not inp.exists():
@@ -83,9 +98,19 @@ def main(argv: list[str] | None = None) -> int:
                 reference = str(refs[0])
                 print(f"[auto] 使用 {refs[0]} 作为参考集标定阈值")
             targets = [(r, out / r.name) for r in roots if r not in refs]
+    n_err = 0
     for src, dst in targets:
-        run(src, dst, reference_dir=reference, calibration=a.calibration, workers=a.workers,
-            repair=not a.no_repair, options=opts, limit=a.limit)
+        try:
+            summary = run(src, dst, reference_dir=reference, calibration=a.calibration, workers=a.workers,
+                          repair=not a.no_repair, options=opts, limit=a.limit)
+        except PathGuardError as exc:
+            print(f"[error] {exc}", file=sys.stderr)
+            return 2
+        n_err += len(summary.get("processing_errors", []))
+    if n_err:
+        print(f"[warn] {n_err} 条轨迹处理异常（已记录为 C_PROCESSING_ERROR，其余轨迹正常输出）", file=sys.stderr)
+        if a.strict:
+            return 3
     return 0
 
 

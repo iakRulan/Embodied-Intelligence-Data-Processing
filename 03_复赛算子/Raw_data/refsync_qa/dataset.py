@@ -17,8 +17,18 @@ from typing import Any
 
 from . import config
 
-_SKIP_PARTS = {"__MACOSX", ".git", "__pycache__"}
+_SKIP_PARTS = {"__MACOSX", ".git", "__pycache__", "_previous_runs"}
 _EP_RE = re.compile(r"episode_(\d+)")
+MARKER = ".refsync_qa_output.json"  # written into every output directory by the pipeline
+
+
+def marked_dirs(root: Path) -> list[Path]:
+    """Operator output directories at or below ``root`` (their contents are never treated as input)."""
+    return [m.parent for m in root.rglob(MARKER)] if root.is_dir() else []
+
+
+def is_under(path: Path, dirs: list[Path]) -> bool:
+    return any(d == path or d in path.parents for d in dirs)
 
 
 @dataclass
@@ -58,8 +68,9 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 def _find_meta_dir(root: Path) -> Path | None:
     if (root / "meta").is_dir():
         return root / "meta"
+    marks = marked_dirs(root)
     for cand in sorted(root.rglob("meta")):
-        if cand.is_dir() and not (set(cand.parts) & _SKIP_PARTS) and (cand / "info.json").exists():
+        if cand.is_dir() and not (set(cand.parts) & _SKIP_PARTS) and (cand / "info.json").exists() and not is_under(cand, marks):
             return cand
     return None
 
@@ -74,11 +85,14 @@ def discover(input_path: str | Path, options: dict[str, Any] | None = None) -> D
         root = p.parent.parent.parent if p.parent.name.startswith("chunk-") else p.parent
     else:
         root = p
+        marks = marked_dirs(p)
         files = sorted(
             f for f in p.rglob("*.parquet")
-            if not (set(f.parts) & _SKIP_PARTS) and not f.name.startswith("._")
+            if not (set(f.relative_to(p).parts) & _SKIP_PARTS) and not f.name.startswith("._") and not is_under(f, marks)
         )
     ds = DatasetInfo(root=root, episodes=[])
+    if p.is_dir() and marks:
+        ds.warnings.append("跳过 RefSync-QA 输出目录（含输出标记）: " + ", ".join(str(m) for m in marks))
     if not files:
         ds.warnings.append(f"no parquet files under {p}")
 

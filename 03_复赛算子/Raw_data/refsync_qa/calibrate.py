@@ -8,6 +8,7 @@ thresholds are reference statistics and which are engineering floors.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -16,6 +17,7 @@ from typing import Any
 import numpy as np
 
 from . import config
+from .detect import frozen_runs, screen_mask
 from .features import arm_steps, xcorr_lags
 
 
@@ -33,9 +35,7 @@ def _full_step(M: np.ndarray) -> np.ndarray:
 
 
 def _screen(sf: dict[str, Any], thr: dict[str, Any]) -> np.ndarray:
-    return sf["decode_ok"] & (
-        (sf["dark"] >= thr["screen_dark_fraction"]) | (sf["bright"] >= thr["screen_bright_fraction"]) | (sf["std"] <= thr["screen_std_luma"])
-    )
+    return screen_mask(sf, thr)
 
 
 def calibrate(ref_feats: list[dict[str, Any]], opts: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -140,54 +140,109 @@ def calibrate(ref_feats: list[dict[str, Any]], opts: dict[str, Any] | None = Non
     thr["visual_diversity_low"] = min(divs) * 0.9 if divs else thr["visual_diversity_low"]
     src["value"] = "step cuts: reference 10%/50% quantiles; episode rates: beyond reference max/min by 10%"
 
-    # --- arm motion, frozen stream, visual–kinematic lag ---
-    arm_all, vk = [], {}
-    frozen_runs: list[int] = []
+    # --- arm motion, frozen stream, visual–kinematic / cross-camera lag ---
+    arm_all, vk, xcam = [], {}, {}
+    max_lag = int(opts.get("max_lag_search", 12))
+    per_ep_steps = []
     for f in feats:
         S = f["state"]
         if S.shape[1] != layout["dim"]:
+            per_ep_steps.append(None)
             continue
         st = arm_steps(np.where(np.isfinite(S).all(axis=1)[:, None], S, np.nan), layout)
+        per_ep_steps.append(st)
         for v in st.values():
             arm_all += v.tolist()
-        for col, sf in f.get("streams", {}).items():
+        both = np.fmax.reduce(np.vstack(list(st.values())), axis=0)
+        streams = f.get("streams", {})
+        for col, sf in streams.items():
             arm = layout.get("camera_arm", {}).get(col)
-            if arm in st:
-                lags = xcorr_lags(sf["motion"], st[arm], int(opts.get("max_lag_search", 12)))
-                if lags:
-                    b = max(lags, key=lags.get)
-                    vk.setdefault(col, []).append((b, lags[b]))
+            mv = st[arm] if arm in st else both
+            lags = xcorr_lags(sf["motion"], mv, max_lag)
+            if lags:
+                b_ = max(lags, key=lags.get)
+                vk.setdefault(col, []).append((b_, lags[b_]))
+            for other, of in streams.items():
+                if other == col:
+                    continue
+                lx = xcorr_lags(sf["motion"], of["motion"], max_lag)
+                if lx:
+                    b_ = max(lx, key=lx.get)
+                    xcam.setdefault(f"{col}|{other}", []).append((b_, lx[b_]))
     thr["arm_moving_step"] = _q(arm_all, 0.50)
-    for f in feats:
-        S = f["state"]
-        if S.shape[1] != layout["dim"]:
+    frozen_len: list[int] = []
+    for f, st in zip(feats, per_ep_steps):
+        if st is None:
             continue
-        st = arm_steps(np.where(np.isfinite(S).all(axis=1)[:, None], S, np.nan), layout)
+        both = np.fmax.reduce(np.vstack(list(st.values())), axis=0)
         for col, sf in f.get("streams", {}).items():
             arm = layout.get("camera_arm", {}).get(col)
-            mv = st[arm] if arm in st else np.fmax.reduce(np.vstack(list(st.values())), axis=0)
-            frozen = sf["decode_ok"] & ~_screen(sf, thr) & (sf["motion"] < thr["freeze_motion"])
-            moving = np.isfinite(mv) & (mv > thr["arm_moving_step"])
-            run = best = 0
-            for fz, m in zip(frozen, moving):
-                run = run + 1 if (fz and m) else 0
-                best = max(best, run)
-            frozen_runs.append(best)
-    thr["freeze_min_run"] = int(max(10, 3 * max(frozen_runs or [0])))
-    thr["_reference_max_frozen_moving_run"] = int(max(frozen_runs or [0]))
+            mv = st[arm] if arm in st else both
+            runs = frozen_runs(sf, mv, thr)
+            frozen_len.append(max((r[2] for r in runs), default=0))
+    longest = int(max(frozen_len or [0]))
+    thr["freeze_min_run"] = int(max(10, math.ceil(1.5 * longest)))
+    thr["_reference_max_frozen_moving_run_frames"] = longest
     thr["vk_ref_lag"] = {}
     thr["_reference_vk"] = {}
     for col, pairs in vk.items():
-        lags = [p[0] for p in pairs]
-        rs = [p[1] for p in pairs]
+        lags = [p_[0] for p_ in pairs]
         mode = max(set(lags), key=lags.count)
         thr["vk_ref_lag"][col] = int(mode)
-        thr["_reference_vk"][col] = {"lags": lags, "r": [round(r, 3) for r in rs]}
-    src["vk"] = "mode of reference best lag between wrist-camera motion and same-arm step"
-    src["freeze"] = "motion < 0.3 grey levels (reference 0.1%-1% quantile band); run >= max(10, 3 x longest reference frozen-while-moving run)"
+        thr["_reference_vk"][col] = {"lags": lags, "r": [round(p_[1], 3) for p_ in pairs]}
+    thr["xcam_ref_lag"] = {}
+    thr["_reference_xcam"] = {}
+    for key, pairs in xcam.items():
+        lags = [p_[0] for p_ in pairs]
+        thr["xcam_ref_lag"][key] = int(max(set(lags), key=lags.count))
+        thr["_reference_xcam"][key] = {"lags": lags, "r": [round(p_[1], 3) for p_ in pairs]}
+    src["vk"] = "mode of reference best lag between camera motion and own-arm step (scene camera: max of both arms)"
+    src["xcam"] = "mode of reference best lag between the motion signals of two cameras (evidence for scene-camera re-alignment)"
+    src["freeze"] = ("motion < 0.3 grey levels; run length counted in FRAMES (low-motion differences + 1) with >=50% moving rows; "
+                     "freeze_min_run = max(10, ceil(1.5 x longest reference run))")
+
+    # --- observed reference ranges (documentation only: the envelope/gripper limits are NOT learned) ---
+    rng_obs: dict[str, Any] = {}
+    for f in feats:
+        for key in ("state", "action"):
+            M = f[key]
+            if M.shape[1] != layout["dim"]:
+                continue
+            for arm, spec in layout["arms"].items():
+                fin = np.isfinite(M).all(axis=1)
+                if not fin.any():
+                    continue
+                pos = np.abs(M[fin][:, spec["pos"]])
+                g = M[fin][:, spec["gripper"]]
+                d = rng_obs.setdefault(f"{key}.{arm}", {"pos_abs_max": 0.0, "gripper_min": math.inf, "gripper_max": -math.inf})
+                d["pos_abs_max"] = max(d["pos_abs_max"], float(pos.max()))
+                d["gripper_min"] = min(d["gripper_min"], float(g.min()))
+                d["gripper_max"] = max(d["gripper_max"], float(g.max()))
+    thr["_reference_observed_ranges"] = rng_obs
+    src["position_envelope"] = ("fixed engineering bound |pos| <= 1.0 (unit of the data, presumably m); NOT learned from the reference "
+                                "(reference observed ranges are recorded in _reference_observed_ranges)")
+    src["gripper"] = "fixed [-0.05, 1.05] around the [0,1] normalisation implied by the reference; NOT a hardware limit"
     thr["_source"] = src
     thr["_reference_episodes"] = len(feats)
     return thr
+
+
+def provenance(ref_paths: list[Path], ref_ids: list[int], thr: dict[str, Any]) -> dict[str, Any]:
+    """Reference IDs, per-file SHA-256 and a hash of the threshold values (reproducibility record)."""
+    files = []
+    for pth, ep in zip(ref_paths, ref_ids):
+        h = hashlib.sha256()
+        with open(pth, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        files.append({"episode_index": int(ep), "file": Path(pth).name, "sha256": h.hexdigest()})
+    return {"reference_episode_ids": [int(e) for e in ref_ids], "reference_files": files,
+            "thresholds_sha256": thresholds_hash(thr), "operator": config.VERSION}
+
+
+def thresholds_hash(thr: dict[str, Any]) -> str:
+    core = {k: v for k, v in thr.items() if not k.startswith("_")}
+    return hashlib.sha256(json.dumps(core, sort_keys=True, default=float).encode("utf-8")).hexdigest()
 
 
 def load_thresholds(path: str | Path | None) -> dict[str, Any]:
