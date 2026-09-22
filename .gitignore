@@ -12,3 +12,18 @@ __pycache__/
 .workbuddy/
 # 算子运行产物
 run_output*/
+# Local Git exchange files, generated submission assets, and credentials
+GitHub同步/
+*.pptx
+*.xlsx
+*.pdf
+01_最新成果/附件/
+01_最新成果/figures/
+01_最新成果/submission_checksums.csv
+*.png
+*.jpg
+*.jpeg
+.env
+.env.*
+*.pem
+*.key
