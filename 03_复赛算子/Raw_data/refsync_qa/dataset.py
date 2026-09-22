@@ -10,6 +10,7 @@ Nothing here assumes a fixed number of episodes.
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,6 +53,7 @@ class DatasetInfo:
     image_columns: list[str] = field(default_factory=list)
     video_columns: list[str] = field(default_factory=list)
     expected_image_shape: tuple[int, int, int] | None = (224, 224, 3)
+    image_shapes: dict[str, tuple[int, int, int]] = field(default_factory=dict)
     state_dim: int | None = 20
     action_dim: int | None = 20
 
@@ -119,8 +121,10 @@ def discover(input_path: str | Path, options: dict[str, Any] | None = None) -> D
         ds.warnings.append("meta/ not found: metadata consistency checks are marked 不可评估")
 
     # fps
-    fps = options.get("fps") or ds.info.get("fps") or 10.0
+    fps = options.get("fps") if options.get("fps") is not None else ds.info.get("fps", 10.0)
     ds.fps = float(fps)
+    if not math.isfinite(ds.fps) or ds.fps <= 0:
+        raise ValueError("fps 必须是有限正数")
 
     # image / video columns from info.json features
     feats = ds.info.get("features", {}) if isinstance(ds.info.get("features"), dict) else {}
@@ -130,7 +134,7 @@ def discover(input_path: str | Path, options: dict[str, Any] | None = None) -> D
             ds.image_columns.append(name)
             shape = spec.get("shape")
             if shape and len(shape) == 3 and options.get("expected_image_shape") is None:
-                ds.expected_image_shape = tuple(int(x) for x in shape)
+                ds.image_shapes[name] = tuple(int(x) for x in shape)
         elif dtype == "video":
             ds.video_columns.append(name)
     if options.get("expected_image_shape"):
@@ -138,7 +142,7 @@ def discover(input_path: str | Path, options: dict[str, Any] | None = None) -> D
     if not ds.image_columns and not ds.video_columns:
         ds.image_columns = list(config.DEFAULT_IMAGE_COLUMNS)
     for key, alias in (("state_dim", "state"), ("action_dim", "actions")):
-        for name in config.FIELD_ALIASES[alias]:
+        for name in options.get("field_aliases", config.FIELD_ALIASES)[alias]:
             spec = feats.get(name)
             if isinstance(spec, dict) and spec.get("shape"):
                 setattr(ds, key, int(spec["shape"][0]))

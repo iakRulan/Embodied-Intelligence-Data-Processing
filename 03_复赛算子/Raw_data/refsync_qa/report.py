@@ -4,10 +4,8 @@
 Governance order
 1. frame_valid  = final (post-repair) rows without a training-blocking code;
 2. clips        = runs of frame_valid rows with consecutive frame_index, >= min_clip_frames;
-3. frame-level redundancy removal (non-transitive): in priority order, a clip
-   row is dropped only when an identical all-modality row (all cameras +
-   state + actions) is already KEPT in a higher-priority episode; clips are
-   then recomputed;
+3. clip-level redundancy removal (non-transitive): drop only an entire clip
+   covered in the same order by a KEPT clip of the same known task;
 4. train_keep   = member of a final clip (the only rows a trainer should read).
 """
 from __future__ import annotations
@@ -85,8 +83,14 @@ def governance(results: list[dict[str, Any]], opts: dict[str, Any]) -> dict[int,
         else:
             policy = "隔离回采"
         low_value = any(config.category(c) == config.CAT_V and c not in ("V_EPISODE_OVERLAP", "V_EPISODE_DUPLICATE") for c in fin["codes"])
+        estimated_rows = {int(a["row"]) for a in r["repair"]["audit"] if int(a["row"]) >= 0 and
+                          (a["repair_code"] in ("J_STATE_NONFINITE", "J_ACTION_NONFINITE", "J_POSITION_ENVELOPE")
+                           or "按标称周期" in a["method"])}
+        weight = opts["low_value_sample_weight"] if low_value else 1.0
+        if estimated_rows:
+            weight = min(weight, opts.get("estimated_repair_sample_weight", 0.5))
         gov[ep] = {"policy": policy, "policy_before_dedup": policy, "valid": valid, "clips": clips, "clips_before_dedup": list(clips),
-                   "repaired": repaired, "fi": fi, "weight": opts["low_value_sample_weight"] if low_value else 1.0,
+                   "repaired": repaired, "fi": fi, "weight": weight, "estimated_rows": estimated_rows,
                    "final_score": fin["score"].get("overall_score") or 0.0, "dedup_drop": np.zeros(n, bool), "covered_by": set()}
 
     # ---- frame-level, non-transitive redundancy removal ----
@@ -97,27 +101,43 @@ def governance(results: list[dict[str, Any]], opts: dict[str, Any]) -> dict[int,
             g = gov[ep]
             return (sum(b - a + 1 for a, b in g["clips"]), g["final_score"], -ep)
 
-        kept: dict[str, int] = {}
+        kept: dict[Any, list[tuple[int, tuple[str, ...], np.ndarray | None]]] = {}
         for ep in sorted(gov, key=prio, reverse=True):
             g = gov[ep]
             sig = by_ep[ep].get("row_full_sig", [])
-            member = np.zeros(len(g["valid"]), bool)
+            task = by_ep[ep]["final"]["metrics"].get("task_index")
+            timestamps = by_ep[ep].get("timestamp_final")
+            remaining, additions = [], []
             for a, b in g["clips"]:
-                member[a : b + 1] = True
-            if len(sig) == len(member):
-                drop = np.array([member[i] and bool(sig[i]) and sig[i] in kept for i in range(len(member))], dtype=bool)
-            else:
-                drop = np.zeros(len(member), bool)
-            if drop.any():
-                g["dedup_drop"] = drop
-                g["covered_by"] = {kept[sig[i]] for i in np.flatnonzero(drop)}
-                g["clips"] = _clips(member & ~drop, g["fi"], min_clip)
-                if not g["clips"]:
-                    g["policy"] = "重复剔除"
-            for a, b in g["clips"]:
-                for i in range(a, b + 1):
-                    if i < len(sig) and sig[i] and sig[i] not in kept:
-                        kept[sig[i]] = ep
+                seq = tuple(sig[a:b + 1])
+                times = np.asarray(timestamps[a:b + 1], float) if timestamps is not None else None
+                covered = None
+                if task is not None and len(seq) == b - a + 1 and all(seq):
+                    for other, parent, parent_times in kept.get(task, []):
+                        for start in range(len(parent) - len(seq) + 1):
+                            if parent[start:start + len(seq)] != seq:
+                                continue
+                            timing_ok = times is None and parent_times is None
+                            if times is not None and parent_times is not None:
+                                pt = parent_times[start:start + len(seq)]
+                                timing_ok = np.isfinite(times).all() and np.isfinite(pt).all() and np.allclose(
+                                    times - times[0], pt - pt[0], rtol=0, atol=1e-5)
+                            if timing_ok:
+                                covered = other
+                                break
+                        if covered is not None:
+                            break
+                if covered is not None:
+                    g["dedup_drop"][a:b + 1] = True
+                    g["covered_by"].add(covered)
+                else:
+                    remaining.append((a, b))
+                    if task is not None and len(seq) == b - a + 1 and all(seq):
+                        additions.append((ep, seq, times))
+            kept.setdefault(task, []).extend(additions)
+            g["clips"] = remaining
+            if g["dedup_drop"].any():
+                g["policy"] = "重复剔除" if not remaining else "部分重复剔除+切段使用"
     for ep, g in gov.items():
         n = len(g["valid"])
         g["train"] = np.zeros(n, bool)
@@ -136,10 +156,11 @@ def build_outputs(results, pairs, ds, thr, opts, out: Path, gov_dir: Path, calib
     min_clip = int(opts["min_clip_frames"])
     rep_dir = out / "report"
     gov = governance(results, opts)
-    # value score after dataset-level redundancy (both packs, same governance-derived redundancy)
+    # Keep repair comparison free from post-repair dataset dedup decisions.
+    # Redundancy is reported separately instead of leaking final governance into the pre-score.
     for r in results:
         for key in ("orig", "final"):
-            _rescore(r[key], gov[r["episode_index"]]["redundancy"])
+            _rescore(r[key], 0.0)
 
     # ---------------- tables ----------------
     ep_rows, frame_rows, interval_rows, mask_index, clips_all, cand_rows = [], [], [], [], [], []
@@ -174,6 +195,7 @@ def build_outputs(results, pairs, ds, thr, opts, out: Path, gov_dir: Path, calib
             "value_coverage": m.get("value_coverage", ""),
             "not_evaluable": "；".join(org["not_evaluable"]),
             "task_index": m.get("task_index"), "expected_task_index": m.get("expected_task_index"),
+            "final_task_index": fin["metrics"].get("task_index"),
             "sa_lag": m.get("sa_lag"), "sa_lag_consistency": m.get("sa_lag_consistency"),
             "idle_fraction": m.get("idle_fraction"), "interaction_rate": m.get("interaction_rate"),
             "visual_diversity": m.get("visual_diversity"),
@@ -182,6 +204,7 @@ def build_outputs(results, pairs, ds, thr, opts, out: Path, gov_dir: Path, calib
             "repair_applied": "；".join(r["repair"]["applied"]),
             "repair_rejected": "；".join(r["repair"]["rejected"]),
             "repair_candidates": len(r["repair"].get("candidates", [])),
+            "estimated_repair_rows": len(g["estimated_rows"]),
             "repaired_file": r["repaired_rel_path"],
             "final_status": fin["status"], "final_issue_codes": ";".join(fin["codes"]),
             "final_overall_score": _nan(fin["score"].get("overall_score")),
@@ -197,7 +220,8 @@ def build_outputs(results, pairs, ds, thr, opts, out: Path, gov_dir: Path, calib
             codes = org["row_codes"][i]
             frame_rows.append({"episode_index": ep, "row": i, "frame_index": fi[i] if i < len(fi) else "",
                                "issue_codes": codes, "categories": ";".join(_cats(codes.split(";"))) if codes else "",
-                               "streams": org["row_notes"][i], "train_keep": bool(g["train"][i])})
+                               "streams": org["row_notes"][i], "final_issue_codes": fin["row_codes"][i],
+                               "issue_stage": "original", "train_keep_stage": "final", "train_keep": bool(g["train"][i])})
         for code in sorted({c for s in org["row_codes"] for c in s.split(";") if c}):
             mask = np.array([code in s.split(";") for s in org["row_codes"]])
             for a, b in _runs(mask):
@@ -210,7 +234,8 @@ def build_outputs(results, pairs, ds, thr, opts, out: Path, gov_dir: Path, calib
             src = "repaired" if r["repaired_rel_path"] else "original"
             mrows = [{"row": i, "frame_index": g["fi"][i] if i < len(g["fi"]) else "", "final_issue_codes": fin["row_codes"][i],
                       "frame_valid": bool(g["valid"][i]), "dedup_drop": bool(g["dedup_drop"][i]), "clip_id": g["clip_id"][i],
-                      "train_keep": bool(g["train"][i]), "sample_weight": g["weight"]} for i in range(n)]
+                      "train_keep": bool(g["train"][i]), "estimated_repair": i in g["estimated_rows"],
+                      "sample_weight": g["weight"]} for i in range(n)]
             _w(gov_dir / "quality_masks" / f"episode_{ep:06d}.csv", mrows)
             mask_index.append({"episode_index": ep, "mask_file": f"quality_masks/episode_{ep:06d}.csv", "read_from": src,
                                "source_file": ("governed/" + r["repaired_rel_path"]) if r["repaired_rel_path"] else r["rel_path"],
@@ -310,9 +335,10 @@ def build_outputs(results, pairs, ds, thr, opts, out: Path, gov_dir: Path, calib
         k = e["task_index"]
         if k in t_all:
             t_all[k] += 1
-            if e["train_frames"]:
-                t_train_eps[k] += 1
-                t_train_frames[k] += e["train_frames"]
+        k = e["final_task_index"]
+        if k in t_train_eps and e["train_frames"]:
+            t_train_eps[k] += 1
+            t_train_frames[k] += e["train_frames"]
 
     def _bal(d: dict[int, int]) -> tuple[Any, Any]:
         if len(d) < 2:
@@ -361,7 +387,7 @@ def build_outputs(results, pairs, ds, thr, opts, out: Path, gov_dir: Path, calib
                    "dimension_means": {d: (round(float(np.mean(v)), 2) if v else None) for d in ("structure", "temporal", "sync", "content", "value")
                                        for v in [[e[f"{d}_score"] for e in ep_rows if e[f"{d}_score"] is not None]]},
                    "value_not_evaluable_episodes": sum(1 for e in ep_rows if e["value_score"] is None),
-                   "note": "每个问题码只计入一个维度；同一物理缺陷可能触发不同维度的多个问题码（多效应），不宣称因果去重。"},
+                   "note": "修复前后总分均不含数据集级去重扣分（另报去重帧数）；每个问题码只计入一个维度。同一缺陷可能触发多维度码，不宣称因果去重；不与 v3.1 总分直接比较。"},
         "governance": {
             "policy_counts": dict(pol),
             "parquet_repaired_copies": len(repaired),
@@ -425,7 +451,7 @@ def _write_markdown(path: Path, s: dict[str, Any]) -> None:
     for layer, val in d["sync_observability"].items():
         lines.append(f"- {layer}：{val}")
     if d["redundancy_relations"]:
-        lines += ["", f"- 跨轨迹冗余关系：{d['redundancy_relations']}（详见 duplicate_pairs.csv；只剔除被直接覆盖的逐帧全模态重复）"]
+        lines += ["", f"- 跨轨迹冗余关系：{d['redundancy_relations']}（详见 duplicate_pairs.csv；只剔除被同任务保留片段完整有序覆盖的全模态片段）"]
     lines += ["", "## 治理", "", "| 训练策略 | 轨迹数 |", "|---|---:|"] + [f"| {k} | {x} |" for k, x in g["policy_counts"].items()]
     lines += ["", f"- Parquet 修复副本 {g['parquet_repaired_copies']} 条，仅元数据补丁 {g['meta_patch_only']} 条；治理后不再需复核 {g['flagged_resolved']}",
               f"- 改写单元格 {g['values_changed']} 处（全部见 repair_audit.csv，写后逐格校验）；拒绝修复 {g['repairs_rejected']} 项；"

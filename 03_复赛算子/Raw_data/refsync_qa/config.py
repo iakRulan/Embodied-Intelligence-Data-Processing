@@ -14,7 +14,7 @@ evidence tier and one scope:
 """
 from __future__ import annotations
 
-VERSION = "RefSync-QA-v3.1"
+VERSION = "RefSync-QA-v3.2"
 
 CAT_T, CAT_S, CAT_C, CAT_V = "时序", "同步", "内容结构", "数据价值"
 CATEGORIES = [CAT_T, CAT_S, CAT_C, CAT_V]
@@ -28,6 +28,7 @@ CODES: dict[str, tuple[str, str, str, bool, str]] = {
     "C_SCHEMA_MISSING_FIELD": (CAT_C, "deterministic", "ep", True, "必需字段缺失"),
     "C_EMPTY_EPISODE": (CAT_C, "deterministic", "ep", True, "轨迹行数为 0"),
     "C_PROCESSING_ERROR": (CAT_C, "deterministic", "ep", True, "处理异常：该轨迹未完成检测（批次继续），需人工检查"),
+    "C_MODALITY_UNSUPPORTED": (CAT_C, "deterministic", "ep", True, "声明的视频模态尚未解码验收，不能作为已验证的训练数据"),
     "C_SCHEMA_DTYPE_MISMATCH": (CAT_C, "deterministic", "ep", False, "字段存储类型与 info.json 声明不一致（值可读，按契约转换后可用）"),
     "C_FIELD_INVALID": (CAT_C, "deterministic", "row", True, "标量字段形状/类型非法（如长度≠1 的列表、字符串），该值不被采信"),
     # ---------------- 时序 ----------------
@@ -83,7 +84,7 @@ CODES: dict[str, tuple[str, str, str, bool, str]] = {
     "V_LOW_INTERACTION": (CAT_V, "threshold", "ep", False, "有效交互运动帧占比低于参考集（高价值片段不足）"),
     "V_LOW_VISUAL_DIVERSITY": (CAT_V, "threshold", "ep", False, "三路画面多样性低于参考集（场景覆盖代理偏低）"),
     "V_EPISODE_DUPLICATE": (CAT_V, "deterministic", "ep", False, "与另一条轨迹整轨等价：双向覆盖、顺序、本体与任务均一致（重复入库）"),
-    "V_EPISODE_OVERLAP": (CAT_V, "deterministic", "ep", False, "与另一条轨迹存在包含/部分重合/同源副本关系（只剔除被直接覆盖的逐帧重复）"),
+    "V_EPISODE_OVERLAP": (CAT_V, "deterministic", "ep", False, "与另一条轨迹存在包含/部分重合/同源副本关系（仅在同任务有序片段被完整直接覆盖时去重）"),
 }
 
 TIER_ORDER = {"deterministic": 0, "high": 1, "threshold": 2}
@@ -137,13 +138,15 @@ DEFAULT_OPTIONS = {
     "sparse_repair_max_ratio": 0.10,  # sparse numeric repair only if <=10% rows affected
     "sparse_repair_max_gap": 2,  # at most 2 consecutive bad rows per hole
     "low_value_sample_weight": 0.5,
+    "estimated_repair_sample_weight": 0.5,
     "max_lag_search": 12,
     "equivalent_coverage": 0.95,  # 整轨等价: both directions' row coverage, order and kinematics >= this
     "partial_overlap": 0.3,  # relation reported when max(coverage) >= this
     "min_shared_images": 30,  # rows with shared image signature needed before a pair is reported
     "index_offset_detect_support": 0.6,  # index-frame_index offset mode must hold this share to localise bad rows
     "index_offset_repair_support": 0.9,  # ... and this share (unique mode) before index is rebuilt
-    "timestamp_policy": "nominal",  # nominal | conservative | off (see README: 时间戳契约)
+    "timestamp_policy": "conservative",  # nominal requires explicit opt-in; it is not recovery of observed time
+    "shift_cross_camera_min_r": 0.8,  # engineering safety gate, not an empirically measured confidence probability
     "vk_min_frames": 60,  # visual–kinematic lag not evaluated on shorter episodes
     "clean_previous": False,  # True: delete previous report/governed of a marked output (default: archive)
 }

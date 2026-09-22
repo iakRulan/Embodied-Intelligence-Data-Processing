@@ -6,12 +6,12 @@
   "timestamp_jitter_frac": 0.02,
   "timestamp_offset_frames": 0.5,
   "state_step_max": 0.5,
-  "action_step_max": 0.5,
+  "action_step_max": 0.5179792711327613,
   "sa_residual_rmse": 0.15,
   "sa_residual_max_abs": 0.4,
   "sa_group_max_abs": {
-    "pos": 0.08114701509475708,
-    "rot6d": 0.2711930125951767,
+    "pos": 0.09646260738372803,
+    "rot6d": 0.44024425745010376,
     "gripper": 0.5346362590789795
   },
   "screen_dark_fraction": 0.95,
@@ -19,24 +19,24 @@
   "screen_std_luma": 5.0,
   "blur": {
     "image": {
-      "lap_min": 1049.98419921875,
-      "grad_min": 6.724089740276336,
-      "byte_min": 36129.38
+      "lap_min": 1057.2275151367187,
+      "grad_min": 6.732694354057312,
+      "byte_min": 36341.02
     },
     "left_wrist_image": {
-      "lap_min": 112.51838409423829,
-      "grad_min": 2.6193055921792983,
-      "byte_min": 24919.565
+      "lap_min": 113.43799565124512,
+      "grad_min": 2.6334534068107605,
+      "byte_min": 25557.262
     },
     "right_wrist_image": {
-      "lap_min": 105.14541191101074,
-      "grad_min": 2.4390635334253314,
-      "byte_min": 25524.84
+      "lap_min": 108.1082781829834,
+      "grad_min": 2.5468695992708206,
+      "byte_min": 25994.666
     }
   },
   "freeze_motion": 0.3,
-  "freeze_min_run": 11,
-  "arm_moving_step": 0.008458215452557016,
+  "freeze_min_run": 12,
+  "arm_moving_step": 0.008416595128535936,
   "vk_ref_lag": {
     "image": -4,
     "left_wrist_image": -4,
@@ -62,16 +62,16 @@
   },
   "low_motion_state_path": 0.5,
   "low_motion_action_path": 1.0,
-  "idle_state_cut": 0.0001,
+  "idle_state_cut": 0.0005365278051101824,
   "idle_action_cut": 0.0001,
-  "interaction_state_cut": 0.015534309952825648,
-  "interaction_action_cut": 0.016636738347636716,
-  "idle_rate_high": 0.24082840236686393,
-  "interaction_rate_low": 0.35000000000000003,
-  "visual_diversity_low": 0.2347058823529412,
+  "interaction_state_cut": 0.017385780073698495,
+  "interaction_action_cut": 0.019814318209663166,
+  "idle_rate_high": 0.2668639053254438,
+  "interaction_rate_low": 0.30355029585798815,
+  "visual_diversity_low": 0.2131578947368421,
   "_reference_sa_group_max": {
-    "pos": 0.04057350754737854,
-    "rot6d": 0.13559650629758835,
+    "pos": 0.048231303691864014,
+    "rot6d": 0.22012212872505188,
     "gripper": 0.26731812953948975
   },
   "_reference_sa_lags": [
@@ -81,12 +81,22 @@
     2,
     1,
     1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
     2,
+    1,
+    1,
+    1,
+    1,
     1,
     1,
     1
   ],
-  "_reference_max_frozen_moving_run_frames": 7,
+  "_reference_max_frozen_moving_run_frames": 8,
   "_reference_vk": {
     "image": {
       "lags": [
@@ -97,9 +107,19 @@
         -4,
         -4,
         -4,
+        -4,
+        -3,
+        -5,
+        -5,
+        -4,
+        -4,
+        -5,
+        -4,
         6,
         -4,
-        -5
+        -5,
+        -5,
+        -4
       ],
       "r": [
         0.321,
@@ -107,16 +127,36 @@
         0.402,
         0.344,
         0.126,
+        0.302,
+        0.402,
         0.141,
+        0.226,
+        0.461,
+        0.41,
+        0.126,
         0.46,
+        0.452,
+        0.226,
         0.251,
         0.38,
-        0.381
+        0.381,
+        0.185,
+        0.247
       ]
     },
     "left_wrist_image": {
       "lags": [
         -4,
+        -4,
+        -4,
+        -4,
+        -4,
+        -4,
+        -4,
+        -4,
+        -3,
+        -5,
+        -5,
         -4,
         -4,
         -4,
@@ -133,11 +173,21 @@
         0.78,
         0.824,
         0.821,
+        0.863,
+        0.881,
         0.74,
+        0.791,
+        0.847,
+        0.869,
+        0.781,
         0.841,
+        0.778,
+        0.738,
         0.863,
         0.914,
-        0.875
+        0.875,
+        0.805,
+        0.777
       ]
     },
     "right_wrist_image": {
@@ -147,7 +197,17 @@
         -4,
         0,
         -4,
+        -4,
+        -4,
         -3,
+        -3,
+        -5,
+        -4,
+        -3,
+        -4,
+        -5,
+        -4,
+        -4,
         -4,
         -4,
         -4,
@@ -159,11 +219,21 @@
         0.692,
         0.827,
         0.7,
+        0.716,
+        0.839,
         0.728,
+        0.789,
+        0.741,
+        0.807,
+        0.742,
         0.921,
+        0.792,
+        0.695,
         0.892,
         0.887,
-        0.894
+        0.894,
+        0.739,
+        0.814
       ]
     }
   },
@@ -179,6 +249,16 @@
         0,
         0,
         0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
         0
       ],
       "r": [
@@ -187,11 +267,21 @@
         0.199,
         0.337,
         0.066,
+        0.271,
+        0.291,
         0.11,
+        0.221,
+        0.046,
+        0.407,
+        0.195,
         0.375,
+        0.355,
+        0.118,
         0.275,
         0.351,
-        0.423
+        0.423,
+        0.102,
+        0.163
       ]
     },
     "image|right_wrist_image": {
@@ -205,7 +295,17 @@
         0,
         0,
         0,
-        -1
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        -1,
+        0,
+        0
       ],
       "r": [
         0.035,
@@ -213,15 +313,35 @@
         0.061,
         0.339,
         -0.155,
+        -0.081,
+        0.412,
         0.009,
+        -0.018,
+        0.233,
+        0.426,
+        -0.008,
         0.498,
+        0.065,
+        0.032,
         0.203,
         0.274,
-        0.422
+        0.422,
+        -0.068,
+        0.095
       ]
     },
     "left_wrist_image|image": {
       "lags": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
         0,
         0,
         0,
@@ -239,11 +359,21 @@
         0.199,
         0.337,
         0.066,
+        0.271,
+        0.291,
         0.11,
+        0.221,
+        0.046,
+        0.407,
+        0.195,
         0.375,
+        0.355,
+        0.118,
         0.275,
         0.351,
-        0.423
+        0.423,
+        0.102,
+        0.163
       ]
     },
     "left_wrist_image|right_wrist_image": {
@@ -254,10 +384,20 @@
         1,
         0,
         0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        -1,
         1,
         0,
         0,
-        -1
+        0,
+        0,
+        -1,
+        3,
+        12
       ],
       "r": [
         0.118,
@@ -265,11 +405,21 @@
         0.339,
         0.855,
         0.171,
+        -0.133,
+        0.78,
         -0.104,
+        0.076,
+        -0.12,
+        0.857,
+        0.293,
         0.82,
+        0.242,
+        0.12,
         0.822,
         0.796,
-        0.893
+        0.893,
+        -0.015,
+        0.359
       ]
     },
     "right_wrist_image|image": {
@@ -283,7 +433,17 @@
         0,
         0,
         0,
-        1
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0
       ],
       "r": [
         0.035,
@@ -291,11 +451,21 @@
         0.061,
         0.339,
         -0.155,
+        -0.081,
+        0.412,
         0.009,
+        -0.018,
+        0.233,
+        0.426,
+        -0.008,
         0.498,
+        0.065,
+        0.032,
         0.203,
         0.274,
-        0.422
+        0.422,
+        -0.068,
+        0.095
       ]
     },
     "right_wrist_image|left_wrist_image": {
@@ -306,10 +476,20 @@
         -1,
         0,
         0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
         -1,
         0,
         0,
-        1
+        0,
+        0,
+        1,
+        -3,
+        -12
       ],
       "r": [
         0.118,
@@ -317,11 +497,21 @@
         0.339,
         0.855,
         0.171,
+        -0.133,
+        0.78,
         -0.104,
+        0.076,
+        -0.12,
+        0.857,
+        0.293,
         0.82,
+        0.242,
+        0.12,
         0.822,
         0.796,
-        0.893
+        0.893,
+        -0.015,
+        0.359
       ]
     }
   },
@@ -337,7 +527,7 @@
       "gripper_max": 0.9990555047988892
     },
     "action.left": {
-      "pos_abs_max": 0.47241583466529846,
+      "pos_abs_max": 0.4785425364971161,
       "gripper_min": 0.0,
       "gripper_max": 1.0
     },
@@ -358,7 +548,7 @@
     "position_envelope": "fixed engineering bound |pos| <= 1.0 (unit of the data, presumably m); NOT learned from the reference (reference observed ranges are recorded in _reference_observed_ranges)",
     "gripper": "fixed [-0.05, 1.05] around the [0,1] normalisation implied by the reference; NOT a hardware limit"
   },
-  "_reference_episodes": 10,
+  "_reference_episodes": 20,
   "_provenance": {
     "reference_episode_ids": [
       0,
@@ -366,11 +556,21 @@
       2,
       3,
       4,
+      5,
+      6,
       7,
+      8,
+      9,
+      10,
+      11,
       12,
+      13,
+      14,
       15,
       16,
-      17
+      17,
+      18,
+      19
     ],
     "reference_files": [
       {
@@ -399,14 +599,54 @@
         "sha256": "3fb2a1fbcf8d6b06896c662a9a3bbc2eb27359e309dcbdfdc57079a0d3f33022"
       },
       {
+        "episode_index": 5,
+        "file": "episode_000005.parquet",
+        "sha256": "7ea63243cb003355b3b0ddcf38882cd9565c3e6694f14b09e7f16ff007165539"
+      },
+      {
+        "episode_index": 6,
+        "file": "episode_000006.parquet",
+        "sha256": "4764c206a637331cc3cff81ccee3e73b320fc4fc8b5c59c81cb7835de4b62837"
+      },
+      {
         "episode_index": 7,
         "file": "episode_000007.parquet",
         "sha256": "d09d9d14848dd90041c2738d1c7bac0a0e60dc66b26e9c89d656642bd9532291"
       },
       {
+        "episode_index": 8,
+        "file": "episode_000008.parquet",
+        "sha256": "77f5c9826cc9fe53f4f0f11ba9a22e52a01b2cdaa0604fba8c5c871de4cdcd08"
+      },
+      {
+        "episode_index": 9,
+        "file": "episode_000009.parquet",
+        "sha256": "039b05f14a2d8c5d279fdac26f7354dfec477bbabd4efafb2af6b83636c568d2"
+      },
+      {
+        "episode_index": 10,
+        "file": "episode_000010.parquet",
+        "sha256": "6e45c5616a34df91b2699b50a439e7db7ed44df8623787775127867c2994e673"
+      },
+      {
+        "episode_index": 11,
+        "file": "episode_000011.parquet",
+        "sha256": "4359c281f026b95efcdcc19aab6ecf83762ac9c8d43ab6c2c10563f228d4c106"
+      },
+      {
         "episode_index": 12,
         "file": "episode_000012.parquet",
         "sha256": "c68f51bd00455ff33bff72c5ba0cd31661a949f3be9bc7a17b77585f78233ab5"
+      },
+      {
+        "episode_index": 13,
+        "file": "episode_000013.parquet",
+        "sha256": "73f46c43aaa90906ecaccc141e23ae980d4248130bc3882e6fcfd966db6a692e"
+      },
+      {
+        "episode_index": 14,
+        "file": "episode_000014.parquet",
+        "sha256": "265776a339d4dfa2c67fa94224fd3b9abc561bd27bc37cef3fe8e1fd42095896"
       },
       {
         "episode_index": 15,
@@ -422,9 +662,19 @@
         "episode_index": 17,
         "file": "episode_000017.parquet",
         "sha256": "cdb7a43bddc77e014ffa6e33d355dfc9533d2595d5361e53bce4e4c6785eb58d"
+      },
+      {
+        "episode_index": 18,
+        "file": "episode_000018.parquet",
+        "sha256": "68abe1eaec70394cc1ebee312dcecca8caeb56b6306687fdb575c989dcfe2813"
+      },
+      {
+        "episode_index": 19,
+        "file": "episode_000019.parquet",
+        "sha256": "2f40ee671a6e46fbb328bfea2011a3ee0f364cc511849e73f8970f3d77710b33"
       }
     ],
-    "thresholds_sha256": "c3a579ca85f778e9747a99824b16ebd7e8139d6d0465763f94d486936cb9a313",
-    "operator": "RefSync-QA-v3.1"
+    "thresholds_sha256": "4b70fc4db785da7888fa76b7d5ccf9b9fc3bf3a9e9b5a1c8f75b4383ee25d4b4",
+    "operator": "RefSync-QA-v3.2"
   }
 }

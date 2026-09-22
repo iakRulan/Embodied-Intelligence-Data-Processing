@@ -25,7 +25,7 @@ from pathlib import Path
 
 from .config import VERSION
 
-_REF_HINTS = ("参考", "reference", "clean", "ref")
+_REF_HINTS = ("参考集", "参考", "reference", "clean", "ref")
 _SKIP = {"__MACOSX", ".git"}
 
 
@@ -65,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--options", default=None, help="可选：JSON 文件，覆盖字段别名/20 维布局/fps 等配置")
     ap.add_argument("--limit", type=int, default=None, help="调试用：只处理前 N 条轨迹")
     ap.add_argument("--timestamp-policy", choices=["nominal", "conservative", "off"], default=None,
-                    help="时间戳修复策略：nominal=按 LeRobot 契约 frame_index/fps 规整（默认）；conservative=只做单位换算/基准归零等无损变换；off=不改时间戳")
+                    help="时间戳策略：conservative（默认）=单位换算/基准归零并保留残余抖动；nominal=显式按 frame_index/fps 规整（非实测时刻恢复）；off=不改")
     ap.add_argument("--clean-previous", action="store_true", help="删除（而非归档）同一输出目录中上次运行的 report/governed（仅当目录有输出标记）")
     ap.add_argument("--strict", action="store_true", help="任一轨迹处理异常时返回退出码 3（异常轨迹仍记录为 C_PROCESSING_ERROR）")
     a = ap.parse_args(argv)
@@ -73,8 +73,15 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--input 与 --output 必填（或设置环境变量 RSQA_INPUT / RSQA_OUTPUT）")
     opts = {}
     if a.options:
-        opts.update(json.loads(Path(a.options).read_text(encoding="utf-8")))
-    if a.min_clip:
+        try:
+            loaded = json.loads(Path(a.options).read_text(encoding="utf-8"))
+            if not isinstance(loaded, dict):
+                raise ValueError("options 必须是 JSON 对象")
+            opts.update(loaded)
+        except (OSError, ValueError) as exc:
+            print(f"[error] {exc}", file=sys.stderr)
+            return 2
+    if a.min_clip is not None:
         opts["min_clip_frames"] = a.min_clip
     if a.no_dedup:
         opts["dedup"] = False
@@ -93,17 +100,20 @@ def main(argv: list[str] | None = None) -> int:
     if inp.is_dir():
         roots = _lerobot_roots(inp)
         if len(roots) > 1:
-            refs = [r for r in roots if any(h in r.name.lower() for h in _REF_HINTS)]
+            refs = [r for r in roots if r.name.lower() in _REF_HINTS]
             if reference is None and len(refs) == 1:
                 reference = str(refs[0])
                 print(f"[auto] 使用 {refs[0]} 作为参考集标定阈值")
-            targets = [(r, out / r.name) for r in roots if r not in refs]
+            targets = [(r, out / r.relative_to(inp)) for r in roots if reference is None or r.resolve() != Path(reference).resolve()]
+    if not targets:
+        print("[error] 没有待检测数据集", file=sys.stderr)
+        return 2
     n_err = 0
     for src, dst in targets:
         try:
             summary = run(src, dst, reference_dir=reference, calibration=a.calibration, workers=a.workers,
                           repair=not a.no_repair, options=opts, limit=a.limit)
-        except PathGuardError as exc:
+        except (PathGuardError, ValueError, OSError) as exc:
             print(f"[error] {exc}", file=sys.stderr)
             return 2
         n_err += len(summary.get("processing_errors", []))

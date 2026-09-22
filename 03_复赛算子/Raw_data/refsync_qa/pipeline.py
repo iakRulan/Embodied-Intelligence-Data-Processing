@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import os
 import platform
 import shutil
@@ -12,6 +13,7 @@ import sys
 import time
 import traceback
 import warnings
+import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -62,12 +64,17 @@ def _prepare_output(out: Path, input_root: Path, opts: dict[str, Any], log) -> N
     marker = out / MARKER
     old = [out / d for d in ("report", "governed") if (out / d).exists()]
     if old:
+        if not marker.is_file():
+            raise PathGuardError("输出含未标记的 report/governed，拒绝移动或删除用户目录；请选择新的输出目录")
+        for d in old + [out / "_previous_runs"]:
+            if _real(d) != d.absolute() or not _inside(_real(d), _real(out)):
+                raise PathGuardError(f"输出子目录含链接或越界路径，拒绝处理: {d}")
         if opts.get("clean_previous") and marker.exists():
             for d in old:
                 shutil.rmtree(d)
             log(f"[output] 已删除上次运行产物（有输出标记）：{', '.join(d.name for d in old)}")
         else:
-            dst = out / "_previous_runs" / time.strftime("%Y%m%d-%H%M%S")
+            dst = out / "_previous_runs" / (time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8])
             dst.mkdir(parents=True, exist_ok=True)
             for d in old:
                 shutil.move(str(d), str(dst / d.name))
@@ -160,7 +167,8 @@ def process_episode(job: dict[str, Any]) -> dict[str, Any]:
     orig = _pack(res)
     img_sig, full_sig = row_signatures(feats, thr, ds.image_columns)
     out: dict[str, Any] = {
-        "episode_index": ep_id, "rel_path": rel, "rows": int(feats.get("n", 0)),
+        "episode_index": ep_id, "rel_path": job.get("source_rel", rel), "rows": int(feats.get("n", 0)),
+        "timestamp_final": feats.get("timestamp", np.zeros(0)).tolist(),
         "frame_index": feats.get("frame_index", np.zeros(0)).tolist(),
         "orig": orig, "final": orig, "repair": {"applied": [], "rejected": [], "audit": [], "meta_patch": {}, "candidates": []},
         "row_img_sig": img_sig, "row_full_sig": full_sig,
@@ -183,6 +191,7 @@ def process_episode(job: dict[str, Any]) -> dict[str, Any]:
                 out["repaired_rel_path"] = "data/" + rel
                 out["repaired_sha256"] = _sha256(target)
                 out["frame_index_final"] = feats2.get("frame_index", np.zeros(0)).tolist()
+                out["timestamp_final"] = feats2.get("timestamp", np.zeros(0)).tolist()
                 out["images_decoded"] += _images_decoded(feats2)
                 out["row_img_sig"], out["row_full_sig"] = row_signatures(feats2, thr, ds.image_columns)
             else:
@@ -211,7 +220,7 @@ def error_result(job: dict[str, Any], exc: BaseException | str) -> dict[str, Any
         sha = _sha256(path) if path.exists() else ""
     except OSError:
         sha = ""
-    return {"episode_index": job["ep_id"], "rel_path": job["rel"], "rows": 0, "frame_index": [], "orig": pk, "final": copy.deepcopy(pk),
+    return {"episode_index": job["ep_id"], "rel_path": job.get("source_rel", job["rel"]), "rows": 0, "frame_index": [], "orig": pk, "final": copy.deepcopy(pk),
             "repair": {"applied": [], "rejected": [], "audit": [], "meta_patch": {}, "candidates": []},
             "row_img_sig": [], "row_full_sig": [], "source_sha256": sha, "repaired_rel_path": "", "repaired_sha256": "",
             "images_decoded": 0, "error": str(msg)[:2000], "seconds": 0.0}
@@ -277,7 +286,7 @@ def relations(results: list[dict[str, Any]], opts: dict[str, Any]) -> list[dict[
                 for b in eps[i + 1:]:
                     key = (a, b) if a < b else (b, a)
                     shared[key] = shared.get(key, 0) + 1
-    task = {r["episode_index"]: r["orig"]["metrics"].get("task_index") for r in results}
+    task = {r["episode_index"]: r["final"]["metrics"].get("task_index") for r in results}
     full_rows = {r["episode_index"]: r.get("row_full_sig", []) for r in results}
     out = []
     for (a, b), k in shared.items():
@@ -294,7 +303,8 @@ def relations(results: list[dict[str, Any]], opts: dict[str, Any]) -> list[dict[
         kin = float(np.mean([bool(x) and x in fulls[b] for x in a_full])) if a_full else 0.0
         same_task = task.get(a) is not None and task.get(a) == task.get(b)
         if cov_a >= eq and cov_b >= eq:
-            rel = "整轨等价" if (order >= eq and kin >= eq and same_task) else "同源副本"
+            exact = bool(full_rows[a]) and all(full_rows[a]) and full_rows[a] == full_rows[b]
+            rel = "整轨等价" if exact and same_task else "同源副本"
         elif max(cov_a, cov_b) >= eq:
             rel = "包含"
         else:
@@ -317,23 +327,61 @@ def _hardware() -> dict[str, Any]:
     return info
 
 
+def validate_options(opts: dict[str, Any], workers=None, limit=None) -> None:
+    unknown = set(opts) - set(config.DEFAULT_OPTIONS) - {"layout", "field_aliases", "dedup"}
+    if unknown:
+        raise ValueError(f"未知 options 配置: {sorted(unknown)}")
+    for key, val in [("workers", workers), ("limit", limit)] + [(k, opts[k]) for k in
+                    ("min_clip_frames", "sparse_repair_max_gap", "max_lag_search", "min_shared_images", "vk_min_frames")]:
+        if val is not None and (isinstance(val, bool) or not isinstance(val, int) or val <= 0):
+            raise ValueError(f"{key} 必须是正整数")
+    for key in ("sparse_repair_max_ratio", "low_value_sample_weight", "estimated_repair_sample_weight", "equivalent_coverage", "partial_overlap",
+                "index_offset_detect_support", "index_offset_repair_support", "shift_cross_camera_min_r"):
+        val = opts[key]
+        if isinstance(val, bool) or not isinstance(val, (int, float)) or not math.isfinite(val) or not 0 <= val <= 1:
+            raise ValueError(f"{key} 必须在 [0,1] 内")
+    if opts["timestamp_policy"] not in ("off", "conservative", "nominal"):
+        raise ValueError("未知 timestamp_policy")
+    shape = opts.get("expected_image_shape")
+    if shape is not None and (not isinstance(shape, (tuple, list)) or len(shape) != 3 or
+                             any(not isinstance(x, int) or x <= 0 for x in shape)):
+        raise ValueError("expected_image_shape 必须为三个正整数")
+    aliases = opts.get("field_aliases", config.FIELD_ALIASES)
+    if set(aliases) != set(config.FIELD_ALIASES) or any(not isinstance(v, list) or not v or
+            any(not isinstance(x, str) or not x for x in v) for v in aliases.values()):
+        raise ValueError("field_aliases 必须完整列出七类字段及非空别名列表")
+    layout = opts["layout"]
+    dim = layout.get("dim", 0)
+    if not isinstance(dim, int) or dim <= 0 or not layout.get("arms"):
+        raise ValueError("layout 必须含正整数 dim 及 arms")
+    used = []
+    for arm in layout["arms"].values():
+        for key, size in (("pos", 3), ("rot6d", 6), ("gripper", 1)):
+            vals = arm.get(key, [])
+            if len(vals) != size or any(not isinstance(i, int) or not 0 <= i < dim for i in vals):
+                raise ValueError(f"layout.{key} 索引长度/范围非法")
+            used.extend(vals)
+    if len(set(used)) != len(used):
+        raise ValueError("layout 各语义分量索引不能重叠")
+
+
 def run(input_dir: str | Path, output_dir: str | Path, reference_dir: str | Path | None = None,
         calibration: str | Path | None = None, workers: int | None = None, repair: bool = True,
         options: dict[str, Any] | None = None, limit: int | None = None, log=print) -> dict[str, Any]:
     t_start = time.perf_counter()
     opts = {**config.DEFAULT_OPTIONS, **(options or {})}
     opts.setdefault("layout", config.DEFAULT_LAYOUT)
+    validate_options(opts, workers, limit)
     guard_paths(input_dir, output_dir, reference_dir)  # P0: never write into (or read back) an input
     out = _real(output_dir)
-    workers = workers or max(1, min(8, (os.cpu_count() or 2) - 1))
+    workers = workers if workers is not None else max(1, min(8, (os.cpu_count() or 2) - 1))
 
     ds = discover(input_dir, opts)
-    if limit:
+    if not ds.episodes:
+        raise ValueError("输入没有可处理的 Parquet；未生成空成功报告")
+    if limit is not None:
         ds.episodes = ds.episodes[:limit]
-    _prepare_output(out, ds.root, opts, log)
-    (out / "report").mkdir(parents=True, exist_ok=True)
     gov = out / "governed"
-    gov.mkdir(parents=True, exist_ok=True)
     log(f"[RefSync-QA {config.VERSION}] input={ds.root} episodes={len(ds.episodes)} fps={ds.fps} cameras={ds.image_columns} workers={workers}")
     for w in ds.warnings:
         log(f"[warn] {w}")
@@ -344,11 +392,15 @@ def run(input_dir: str | Path, output_dir: str | Path, reference_dir: str | Path
     prov: dict[str, Any] = {}
     if reference_dir:
         ref = discover(reference_dir, opts)
+        if not ref.episodes:
+            raise ValueError("参考集为空，不能标定阈值")
         forbidden |= {os.path.realpath(e.path) for e in ref.episodes}
         ctx = _ctx(ref, opts)
         log(f"[calibrate] reference episodes={len(ref.episodes)}")
         with ProcessPoolExecutor(max_workers=workers) as ex:
             ref_feats = list(ex.map(extract, [e.path for e in ref.episodes], [ctx] * len(ref.episodes)))
+        if any(not f.get("read_ok") or not f.get("n") for f in ref_feats):
+            raise ValueError("参考集含不可读/空轨迹，未使用部分参考集静默标定")
         thr = load_thresholds(None)
         thr.update(calibrate(ref_feats, opts))
         prov = provenance([e.path for e in ref.episodes], [e.episode_id for e in ref.episodes], thr)
@@ -356,16 +408,21 @@ def run(input_dir: str | Path, output_dir: str | Path, reference_dir: str | Path
         calib_source = f"现场标定：参考集 {ref.root}（{len(ref.episodes)} 条：{prov['reference_episode_ids']}）"
     else:
         path = Path(calibration) if calibration else DEFAULT_CALIBRATION
+        if calibration and not path.is_file():
+            raise FileNotFoundError(f"指定阈值文件不存在: {path}")
         thr = load_thresholds(path)
         prov = thr.get("_provenance", {})
         ids = prov.get("reference_episode_ids")
         calib_source = (f"阈值文件 {path.name}" + (f"（参考集 {len(ids)} 条：{ids}）" if ids else "")) if path.exists() else "内置 fallback 阈值"
     calib_hash = thresholds_hash(thr)
+    _prepare_output(out, ds.root, opts, log)
+    (out / "report").mkdir(parents=True, exist_ok=True)
+    gov.mkdir(parents=True, exist_ok=True)
     (out / "report" / "thresholds_used.json").write_text(json.dumps(thr, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
     # ---- per-episode (each failure becomes a record; the batch continues) ----
     jobs = [{"ds": ds, "thr": thr, "opts": opts, "ep_id": e.episode_id, "path": str(e.path),
-             "rel": e.rel_path.split("data/", 1)[-1] if "data/" in e.rel_path else e.rel_path,
+             "rel": e.rel_path.removeprefix("data/"), "source_rel": e.rel_path,
              "governed_dir": str(gov), "repair": repair, "forbidden": sorted(forbidden)} for e in ds.episodes]
     results: list[dict[str, Any]] = []
     t_detect = time.perf_counter()
@@ -412,6 +469,7 @@ def run(input_dir: str | Path, output_dir: str | Path, reference_dir: str | Path
     n_img = int(sum(r.get("images_decoded", 0) for r in results))
     summary["calibration_provenance"] = {"thresholds_sha256": calib_hash, **{k: v for k, v in prov.items() if k != "thresholds_sha256"}}
     summary["processing_errors"] = [{"episode_index": r["episode_index"], "error": r["error"].splitlines()[0]} for r in errors]
+    summary["options"] = opts
     summary["timing"] = {
         "detect_repair_recheck_seconds": round(detect_seconds, 2),
         "total_seconds_incl_all_csv_parquet_outputs": round(total, 2),

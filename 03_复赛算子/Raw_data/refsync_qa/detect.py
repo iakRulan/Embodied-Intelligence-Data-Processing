@@ -157,6 +157,9 @@ def analyse(feats: dict[str, Any], ep_id: int, ds, thr: dict[str, Any], opts: di
     n = int(feats.get("n", 0))
     R = Result(n)
     R.metrics["rows"] = n
+    if ds.video_columns:
+        R.ep("C_MODALITY_UNSUPPORTED", "未解码的视频列: " + ",".join(ds.video_columns))
+        R.not_evaluable.append("视频模态：未实现解码与逐帧验收")
 
     # ---------------- file / schema gate ----------------
     if not feats.get("read_ok"):
@@ -313,7 +316,6 @@ def analyse(feats: dict[str, Any], ep_id: int, ds, thr: dict[str, Any], opts: di
     steps = arm_steps(np.where(s_fin[:, None], S, np.nan), layout) if layout_ok else {}
 
     # ---------------- 同步 + 内容: cameras ----------------
-    exp_shape = ds.expected_image_shape  # (H, W, C)
     blur_thr = thr.get("blur", {})
     R.metrics["streams"] = {}
     cam_arm = layout.get("camera_arm", {})
@@ -322,6 +324,7 @@ def analyse(feats: dict[str, Any], ep_id: int, ds, thr: dict[str, Any], opts: di
     both_arms = np.fmax.reduce(np.vstack(list(steps.values())), axis=0) if steps else np.full(n, np.nan)
     shifted: dict[str, int] = {}
     for col, sf in feats.get("streams", {}).items():
+        exp_shape = ds.image_shapes.get(col, ds.expected_image_shape)  # each camera has its own schema
         sm: dict[str, Any] = {}
         P = sf["present"]
         dec = sf["decode_ok"]
@@ -561,6 +564,8 @@ def analyse(feats: dict[str, Any], ep_id: int, ds, thr: dict[str, Any], opts: di
     R.metrics["visual_diversity"] = round(div, 4) if math.isfinite(div) else None
     if math.isfinite(div) and div < thr["visual_diversity_low"]:
         R.ep("V_LOW_VISUAL_DIVERSITY", f"画面多样性 {div:.3f}（{len(divs)}/{len(ds.image_columns)} 路相机）")
+    for col in ds.video_columns:
+        comps[f"video:{col}"] = False
     R.metrics["value_components"] = comps
     R.metrics["value_coverage"] = f"{sum(comps.values())}/{len(comps)}"
     R.metrics["value_evaluable"] = bool(all(comps.values()))

@@ -1,0 +1,404 @@
+{
+  "operator": "RefSync-QA-v3.2",
+  "date": "2026-09-22",
+  "note": "Read-only original data; synthetic metrics are not real-test precision/recall. Nominal timestamps are opt-in estimates.",
+  "environment": {
+    "os": "Windows 11",
+    "python": "3.13.5",
+    "numpy": "2.5.2",
+    "pyarrow": "25.0.1",
+    "pillow": "12.3.0",
+    "workers": 4
+  },
+  "conservative": {
+    "operator": "RefSync-QA-v3.2",
+    "timestamp_policy": "conservative",
+    "input_files_hashed": 115,
+    "input_files_changed": [],
+    "episodes": 89,
+    "reference_episodes": 20,
+    "verified_repaired_copies": 8,
+    "verified_clips": 61,
+    "verified_training_frames": 8881,
+    "training_episodes": 49,
+    "thresholds_sha256": "4b70fc4db785da7888fa76b7d5ccf9b9fc3bf3a9e9b5a1c8f75b4383ee25d4b4",
+    "failures": [],
+    "passed": true
+  },
+  "nominal": {
+    "operator": "RefSync-QA-v3.2",
+    "timestamp_policy": "nominal",
+    "input_files_hashed": 115,
+    "input_files_changed": [],
+    "episodes": 89,
+    "reference_episodes": 20,
+    "verified_repaired_copies": 15,
+    "verified_clips": 68,
+    "verified_training_frames": 10290,
+    "training_episodes": 56,
+    "thresholds_sha256": "4b70fc4db785da7888fa76b7d5ccf9b9fc3bf3a9e9b5a1c8f75b4383ee25d4b4",
+    "failures": [],
+    "passed": true
+  },
+  "default_calibration_comparison": {
+    "columns_compared": 47,
+    "excluded_columns": [
+      "seconds"
+    ],
+    "differences": 0,
+    "episodes_compared": 89
+  },
+  "selftest": {
+    "timestamp_policy": "nominal (explicit opt-in for contract-normalization test cases; production default is conservative)",
+    "synthetic": {
+      "cases": 117,
+      "cases_meeting_expectation": 117,
+      "cases_failed": 0,
+      "frame_level_row_faults": {
+        "TP": 510,
+        "FP": 0,
+        "FN": 6,
+        "precision": 1,
+        "recall": 0.9884,
+        "f1": 0.9942,
+        "note": "仅统计注入行已知的帧级故障，按期望问题码逐行比较"
+      },
+      "repair_estimate_tolerance": 0.002125711829320724
+    },
+    "protocol": {
+      "loeo_episodes": 20,
+      "bases": [
+        12,
+        16,
+        0
+      ],
+      "synthetic_calibration_episodes": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        13,
+        14,
+        15,
+        17,
+        18,
+        19
+      ],
+      "freeze_min_run": 12,
+      "thresholds_sha256": "b4c9235df8dc9854ede9a740dbc660ee3431ebc31ecf6f0dbc34800c0318eb91"
+    },
+    "reference_loeo": {
+      "episodes": 20,
+      "defect_false_positives": 0,
+      "value_hint_episodes": 0,
+      "details": [
+        {
+          "episode": 0,
+          "defect_codes": [],
+          "value_hints": [],
+          "freeze_min_run": 12
+        },
+        {
+          "episode": 1,
+          "defect_codes": [],
+          "value_hints": [],
+          "freeze_min_run": 12
+        },
+        {
+          "episode": 2,
+          "defect_codes": [],
+          "value_hints": [],
+          "freeze_min_run": 12
+        },
+        {
+          "episode": 3,
+          "defect_codes": [],
+          "value_hints": [],
+          "freeze_min_run": 12
+        },
+        {
+          "episode": 4,
+          "defect_codes": [],
+          "value_hints": [],
+          "freeze_min_run": 12
+        },
+        {
+          "episode": 5,
+          "defect_codes": [],
+          "value_hints": [],
+          "freeze_min_run": 12
+        },
+        {
+          "episode": 6,
+          "defect_codes": [],
+          "value_hints": [],
+          "freeze_min_run": 12
+        },
+        {
+          "episode": 7,
+          "defect_codes": [],
+          "value_hints": [],
+          "freeze_min_run": 12
+        },
+        {
+          "episode": 8,
+          "defect_codes": [],
+          "value_hints": [],
+          "freeze_min_run": 12
+        },
+        {
+          "episode": 9,
+          "defect_codes": [],
+          "value_hints": [],
+          "freeze_min_run": 12
+        },
+        {
+          "episode": 10,
+          "defect_codes": [],
+          "value_hints": [],
+          "freeze_min_run": 12
+        },
+        {
+          "episode": 11,
+          "defect_codes": [],
+          "value_hints": [],
+          "freeze_min_run": 12
+        },
+        {
+          "episode": 12,
+          "defect_codes": [],
+          "value_hints": [],
+          "freeze_min_run": 12
+        },
+        {
+          "episode": 13,
+          "defect_codes": [],
+          "value_hints": [],
+          "freeze_min_run": 12
+        },
+        {
+          "episode": 14,
+          "defect_codes": [],
+          "value_hints": [],
+          "freeze_min_run": 12
+        },
+        {
+          "episode": 15,
+          "defect_codes": [],
+          "value_hints": [],
+          "freeze_min_run": 12
+        },
+        {
+          "episode": 16,
+          "defect_codes": [],
+          "value_hints": [],
+          "freeze_min_run": 12
+        },
+        {
+          "episode": 17,
+          "defect_codes": [],
+          "value_hints": [],
+          "freeze_min_run": 12
+        },
+        {
+          "episode": 18,
+          "defect_codes": [],
+          "value_hints": [],
+          "freeze_min_run": 12
+        },
+        {
+          "episode": 19,
+          "defect_codes": [],
+          "value_hints": [],
+          "freeze_min_run": 12
+        }
+      ]
+    },
+    "passed": true
+  },
+  "regression": [
+    {
+      "name": "short_xcorr_5_rows",
+      "passed": true
+    },
+    {
+      "name": "xcorr_unequal_lengths",
+      "passed": true
+    },
+    {
+      "name": "numeric_string_corruption",
+      "passed": true
+    },
+    {
+      "name": "scalar_wrong_shape_reported",
+      "passed": true
+    },
+    {
+      "name": "short_episode_analyse",
+      "passed": true
+    },
+    {
+      "name": "worker_exception_becomes_record",
+      "passed": true
+    },
+    {
+      "name": "sparse_repair_rejects_frame_gap",
+      "passed": true
+    },
+    {
+      "name": "sparse_repair_rejects_untrusted_neighbour",
+      "passed": true
+    },
+    {
+      "name": "float64_sparse_repair_preservation",
+      "passed": true
+    },
+    {
+      "name": "index_offset_tie_not_repaired",
+      "passed": true
+    },
+    {
+      "name": "index_offset_dominant_repaired_minimally",
+      "passed": true
+    },
+    {
+      "name": "post_write_verify_catches_unaudited_change",
+      "passed": true
+    },
+    {
+      "name": "dedup_non_transitive_keeps_disjoint_episode",
+      "passed": true
+    },
+    {
+      "name": "dedup_equivalent_pair_drops_one_copy",
+      "passed": true
+    },
+    {
+      "name": "dedup_same_images_different_state_not_dropped",
+      "passed": true
+    },
+    {
+      "name": "dedup_containment_keeps_superset",
+      "passed": true
+    },
+    {
+      "name": "dedup_and_task_coverage_in_reports",
+      "passed": true
+    },
+    {
+      "name": "output_input_overlap_guard",
+      "passed": true
+    },
+    {
+      "name": "marked_output_never_rediscovered_as_input",
+      "passed": true
+    },
+    {
+      "name": "previous_run_archived_not_overwritten",
+      "passed": true
+    },
+    {
+      "name": "int64_timestamp_schema_and_unit_repair",
+      "passed": true
+    },
+    {
+      "name": "processing_error_recorded_batch_continues",
+      "passed": true
+    },
+    {
+      "name": "reference_file_untouched",
+      "passed": true
+    }
+  ],
+  "source_manifest": [
+    {
+      "file": "03_复赛算子/Raw_data/run.py",
+      "sha256": "0c867a30e191126b54934b8b8e6c6697d182175823589c66d62cf9c167ad51ae"
+    },
+    {
+      "file": "03_复赛算子/Raw_data/refsync_qa/__init__.py",
+      "sha256": "5a096136b84a89e8b16a4de89e3e3428506e9d3f54d23a98b7b6afa61e4b1c81"
+    },
+    {
+      "file": "03_复赛算子/Raw_data/refsync_qa/__main__.py",
+      "sha256": "3129adff95e0f38b87ab34cddfc27082c7892bcaec267ff5d40f160fdf55b44a"
+    },
+    {
+      "file": "03_复赛算子/Raw_data/refsync_qa/calibrate.py",
+      "sha256": "4bdc43a33f7c75983174537b7aa9529579566c32337075b795bc8b1bdb0d0132"
+    },
+    {
+      "file": "03_复赛算子/Raw_data/refsync_qa/cli.py",
+      "sha256": "e2958847a3bb674917d7a1c8de9b0b76d080ee1a105e2e1187251cb7f9d122d7"
+    },
+    {
+      "file": "03_复赛算子/Raw_data/refsync_qa/config.py",
+      "sha256": "0a7594744df11c2e07eeed8783b1e5201262f2b315e4bf54f9f52cdfc05dd278"
+    },
+    {
+      "file": "03_复赛算子/Raw_data/refsync_qa/dataset.py",
+      "sha256": "d99d1b26b08ef5799c0130cad86435d212bb70206095170e509a08e26e57cb3d"
+    },
+    {
+      "file": "03_复赛算子/Raw_data/refsync_qa/detect.py",
+      "sha256": "a3cd5978a84df67bf90fc0df785248defdbc94ad224891c7e12ad456ac8bf9e2"
+    },
+    {
+      "file": "03_复赛算子/Raw_data/refsync_qa/features.py",
+      "sha256": "ea7f6d50e430b5e5ad6c3c84268343417920013820ebba8cb751d71a3989f7ab"
+    },
+    {
+      "file": "03_复赛算子/Raw_data/refsync_qa/pipeline.py",
+      "sha256": "4980b6145de4a76e83823b1088d464e8da6f19176f0ddf68bdfa7dde990d7f06"
+    },
+    {
+      "file": "03_复赛算子/Raw_data/refsync_qa/repair.py",
+      "sha256": "f0d7e902160037ecb06143a2dc5095342adc2b188de930145c4e594d385d8ffc"
+    },
+    {
+      "file": "03_复赛算子/Raw_data/refsync_qa/report.py",
+      "sha256": "8908e0d5266a41d85114bd7c979257c18a96ef8b316a6f782c5fcafb1fd72eb8"
+    },
+    {
+      "file": "03_复赛算子/Raw_data/refsync_qa/score.py",
+      "sha256": "b4711cc2f0e9c0d8530230a5fc43fdd73c216dd42b9280867e5b3beb54011435"
+    },
+    {
+      "file": "03_复赛算子/Raw_data/tools/acceptance.py",
+      "sha256": "40105c7a6cf6386778e8e99e41a705dea21aa299ec1b49bd75b58d3e370454a9"
+    },
+    {
+      "file": "03_复赛算子/Raw_data/tools/calibrate_reference.py",
+      "sha256": "dbc175200b2a07233e247c76c3a6d63e336e9e2c13528440ff8c3768b24ac4a6"
+    },
+    {
+      "file": "03_复赛算子/Raw_data/tools/load_governed.py",
+      "sha256": "a80c020a8b466c6b496acf78e282ff6910fc4a51967588d18f51c45d7b06bb13"
+    },
+    {
+      "file": "03_复赛算子/Raw_data/tools/regression_probes.py",
+      "sha256": "dfee9d102c203b3e76daa2593824cd061952a2f1499bd891657550263a178b21"
+    },
+    {
+      "file": "03_复赛算子/Raw_data/tools/selftest.py",
+      "sha256": "d27a963f42170de6e5108d7d948a5d2149de1aefa21a78564d988a2980f7ba12"
+    },
+    {
+      "file": "03_复赛算子/Raw_data/tools/test_safety.py",
+      "sha256": "e6b01d6a131c38c8fdabca774495c462b53cc7c5afd0719a6ed8ffd1f3917bfc"
+    }
+  ],
+  "safety_tests": {
+    "unique_tests": 24,
+    "normal_passed": true,
+    "optimized_mode_passed": true
+  },
+  "ast_files_checked": 19
+}

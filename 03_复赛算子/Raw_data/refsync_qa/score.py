@@ -24,7 +24,7 @@ import numpy as np
 from . import config
 
 WEIGHTS = {"structure": 0.25, "temporal": 0.20, "sync": 0.20, "content": 0.20, "value": 0.15}
-STRUCT_CODES = {"C_FILE_UNREADABLE", "C_SCHEMA_MISSING_FIELD", "C_EMPTY_EPISODE", "C_PROCESSING_ERROR", "C_SCHEMA_DTYPE_MISMATCH",
+STRUCT_CODES = {"C_FILE_UNREADABLE", "C_SCHEMA_MISSING_FIELD", "C_EMPTY_EPISODE", "C_PROCESSING_ERROR", "C_SCHEMA_DTYPE_MISMATCH", "C_MODALITY_UNSUPPORTED",
                 "C_FIELD_INVALID", "J_VALUE_UNPARSEABLE", "T_METADATA_LENGTH_MISMATCH",
                 "J_DIM_MISMATCH", "C_IMAGE_DECODE", "C_IMAGE_SHAPE"}
 
@@ -74,7 +74,9 @@ def score_parts(row_codes: list[Iterable[str]], ep_codes: dict[str, str], metric
     den = sum(WEIGHTS[d] for d in WEIGHTS if not math.isnan(out[f"{d}_score"]))
     overall = num / den if den else 0.0
     gate = ""
-    if "C_SCHEMA_MISSING_FIELD" in ep_codes:
+    if "C_MODALITY_UNSUPPORTED" in ep_codes:
+        overall, gate = min(overall, 25.0), "视频模态未验收，总分上限 25；不能作为训练准入证明"
+    elif "C_SCHEMA_MISSING_FIELD" in ep_codes:
         overall, gate = min(overall, 25.0), "必需字段缺失，总分上限 25"
     elif "S_STREAM_MISSING" in ep_codes:
         overall, gate = min(overall, 40.0), "整路相机缺失，总分上限 40"

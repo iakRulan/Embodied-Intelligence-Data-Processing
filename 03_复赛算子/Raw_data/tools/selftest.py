@@ -261,7 +261,8 @@ def main() -> int:
     _safe_rmtree(res_dir)
     res_dir.mkdir(parents=True)
     (res_dir / MARK).write_text("selftest run output", encoding="utf-8")  # written first: an interrupted run stays deletable
-    run(syn, res_dir, calibration=cal, workers=a.workers, options={"clean_previous": True}, log=lambda *_: None)
+    run(syn, res_dir, calibration=cal, workers=a.workers,
+        options={"clean_previous": True, "timestamp_policy": "nominal"}, log=lambda *_: None)
     rep = {int(r["episode_index"]): r for r in csv.DictReader(open(res_dir / "report" / "episode_report.csv", encoding="utf-8-sig"))}
     flags: dict[int, list[set[str]]] = {}
     for r in csv.DictReader(open(res_dir / "report" / "frame_flags.csv", encoding="utf-8-sig")):
@@ -350,7 +351,8 @@ def main() -> int:
                                                  "note": "仅统计注入行已知的帧级故障，按期望问题码逐行比较"},
                       "repair_estimate_tolerance": tol_est,
                       "rows": rows_out},
-        "passed": not fails and not fp and not clean_fp,
+        "timestamp_policy": "nominal (explicit opt-in for contract-normalization test cases; production default is conservative)",
+        "passed": not fails and not fp and not clean_fp and not any(r["value_hints"] for r in lo),
     }
     (out / "selftest_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     print(f"synthetic: {detected}/{n_cases} cases meet expectation; frame-level (row faults) P={prec:.3f} R={rec:.3f} F1={f1:.3f} "

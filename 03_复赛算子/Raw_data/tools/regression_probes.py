@@ -311,7 +311,7 @@ def main() -> int:
         (sand / "meta" / "tasks.jsonl").write_text("\n".join(json.dumps({"task_index": k, "task": v}) for k, v in ds.tasks.items()), encoding="utf-8")
         (sand / "meta" / "episodes.jsonl").write_text(json.dumps(ds.episodes_meta[a.base_episode]), encoding="utf-8")
         o = out / "int_ts_run"
-        run(sand, o, workers=1, log=lambda *x: None)
+        run(sand, o, workers=1, options={"timestamp_policy": "nominal"}, log=lambda *x: None)
         import csv
         r = next(csv.DictReader(open(o / "report" / "episode_report.csv", encoding="utf-8-sig")))
         fixed = pq.read_table(o / "governed" / "data" / "chunk-000" / f"episode_{a.base_episode:06d}.parquet")

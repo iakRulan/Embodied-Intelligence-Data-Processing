@@ -17,6 +17,8 @@ Principles
 from __future__ import annotations
 
 import math
+import hashlib
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -34,6 +36,14 @@ _UNTRUSTED = {"J_SPIKE_JUMP", "J_POSITION_ENVELOPE", "J_GRIPPER_RANGE", "J_ROT6D
 
 
 def _fmt(v: Any) -> str:
+    if isinstance(v, dict):
+        def safe(x):
+            if isinstance(x, bytes):
+                return {"bytes_sha256": hashlib.sha256(x).hexdigest(), "length": len(x)}
+            if isinstance(x, dict):
+                return {k: safe(val) for k, val in x.items()}
+            return x
+        return json.dumps(safe(v), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     if v is None:
         return "null"
     if isinstance(v, float):
@@ -47,8 +57,14 @@ def _same(a: Any, b: Any) -> bool:
     if a is None or b is None:
         return False
     if isinstance(a, (int, float, np.number)) and isinstance(b, (int, float, np.number)) and not isinstance(a, bool) and not isinstance(b, bool):
-        fa, fb = float(a), float(b)
-        return (math.isnan(fa) and math.isnan(fb)) or fa == fb
+        # Never round int64 identifiers through float64 (2**53 + 1 is distinct).
+        if isinstance(a, (int, np.integer)) and isinstance(b, (int, np.integer)):
+            return int(a) == int(b)
+        if isinstance(a, (int, np.integer)):
+            return math.isfinite(float(b)) and float(b).is_integer() and int(a) == int(b)
+        if isinstance(b, (int, np.integer)):
+            return _same(b, a)
+        return (math.isnan(float(a)) and math.isnan(float(b))) or a == b
     return a == b
 
 
@@ -64,7 +80,10 @@ def verify_copy(orig, new, audit: list[dict[str, Any]]) -> list[str]:
     Returns a list of problems (empty = every change is audited and every
     audited change happened with the audited value).
     """
-    expected: dict[tuple[str, int], str] = {(a["field"], int(a["row"])): a["repaired_value"] for a in audit if int(a["row"]) >= 0}
+    expected: dict[tuple[str, int], list[dict]] = {}
+    for a in audit:
+        if int(a["row"]) >= 0 or a["field"].endswith(".dtype"):
+            expected.setdefault((a["field"], int(a["row"])), []).append(a)
     seen: set[tuple[str, int]] = set()
     problems: list[str] = []
     if orig.num_rows != new.num_rows:
@@ -72,31 +91,50 @@ def verify_copy(orig, new, audit: list[dict[str, Any]]) -> list[str]:
     if list(orig.column_names) != list(new.column_names):
         return ["列集合/顺序发生变化"]
 
-    def check(key: tuple[str, int], value: Any, numeric: bool) -> None:
+    def equal_text(a: str, b: str) -> bool:
+        if a == b:
+            return True
+        try:
+            x, y = json.loads(a), json.loads(b)
+            if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+                return _same(x, y)
+        except (ValueError, TypeError):
+            pass
+        return False
+
+    def check(key: tuple[str, int], old: Any, value: Any) -> None:
         seen.add(key)
         if key not in expected:
             problems.append(f"未审计的改动 {key[0]}@{key[1]}")
             return
-        if numeric:
-            try:
-                ok = _same(float(expected[key]) if expected[key] not in ("null",) else None, None if value is None else float(value))
-            except ValueError:
-                ok = False
-            if not ok:
-                problems.append(f"写入值与审计不符 {key[0]}@{key[1]}: {value!r} vs {expected[key]}")
+        chain = expected[key]
+        if not equal_text(_fmt(old), chain[0]["original_value"]):
+            problems.append(f"原值与审计不符 {key[0]}@{key[1]}")
+        if not equal_text(_fmt(value), chain[-1]["repaired_value"]):
+            problems.append(f"写入值与审计不符 {key[0]}@{key[1]}")
+        for left, right in zip(chain, chain[1:]):
+            if not equal_text(left["repaired_value"], right["original_value"]):
+                problems.append(f"审计链断裂 {key[0]}@{key[1]}")
 
     for name in orig.column_names:
+        of, nf = orig.schema.field(name), new.schema.field(name)
+        if of.type != nf.type:
+            check((name + ".dtype", -1), str(of.type), str(nf.type))
+        if of.nullable != nf.nullable or of.metadata != nf.metadata:
+            problems.append(f"未授权字段属性变更 {name}")
         o, w = orig.column(name).to_pylist(), new.column(name).to_pylist()
         for r, (x, y) in enumerate(zip(o, w)):
             if isinstance(x, list) and isinstance(y, list) and len(x) == len(y):
                 for c, (u, v) in enumerate(zip(x, y)):
                     if not _same(u, v):
-                        check((f"{name}[{c}]", r), v, True)
+                        check((f"{name}[{c}]", r), u, v)
             elif isinstance(x, dict) or isinstance(y, dict):
                 if x != y:
-                    check((name, r), None, False)
+                    check((name, r), x, y)
             elif not _same(x, y):
-                check((name, r), y, not isinstance(y, (list, dict, str, bytes)))
+                check((name, r), x, y)
+    if orig.schema.metadata != new.schema.metadata:
+        problems.append("未授权表级元数据变更")
     for key in expected:
         if key not in seen:
             problems.append(f"审计记录的改动未发生 {key[0]}@{key[1]}")
@@ -153,7 +191,7 @@ class Repairer:
             declared = _arrow_type(self._declared(name) or "")
             typ = declared or pa.float64()
             self._schema_log(name, str(field.type), str(typ), "非数值标量列按 info.json 声明类型重建", code)
-        self.table = t.set_column(i, pa.field(name, typ, field.nullable), pa.array(values, type=typ))
+        self.table = t.set_column(i, pa.field(name, typ, field.nullable, metadata=field.metadata), pa.array(values, type=typ))
 
     def _schema_log(self, name: str, old: str, new: str, method: str, code: str) -> None:
         self.audit.append({"episode_index": self.ep, "row": -1, "field": f"{name}.dtype", "original_value": old,
@@ -229,7 +267,7 @@ class Repairer:
                 self._candidate("C_SCHEMA_DTYPE_MISMATCH", f"{name} 转为 {declared}", f"存储 {field.type}", "有损转换")
                 continue
             new = pc.cast(col, want)
-            self.table = t = t.set_column(t.column_names.index(name), pa.field(name, want, field.nullable), new)
+            self.table = t = t.set_column(t.column_names.index(name), pa.field(name, want, field.nullable, metadata=field.metadata), new)
             self._schema_log(name, str(field.type), str(want), "按 info.json 声明类型无损转换（数值不变）", "C_SCHEMA_DTYPE_MISMATCH")
             self.applied.append(f"{name} 存储类型 {field.type} → {want}（无损）")
 
@@ -241,7 +279,7 @@ class Repairer:
             trig.add("C_FIELD_INVALID")
         if not trig:
             return
-        policy = self.opts.get("timestamp_policy", "nominal")
+        policy = self.opts.get("timestamp_policy", "conservative")
         if policy == "off":
             self.rejected.append("时间戳修复已关闭（timestamp_policy=off）")
             self._candidate(";".join(sorted(trig)), "timestamp = frame_index / fps", "LeRobot 契约", "timestamp_policy=off")
@@ -287,14 +325,14 @@ class Repairer:
         typ = field.type if pa.types.is_floating(field.type) else declared
         cast = (lambda v: float(np.float32(v))) if typ == pa.float32() else float
         old = t.column(name).to_pylist()
-        new_vals = [cast(v) for v in nominal.tolist()]
+        new_vals = [cast(v) for v in (lossless if lossless is not None else nominal).tolist()]
         rc = self.res.row_codes
         n_changed = 0
         for r, (o, v) in enumerate(zip(old, new_vals)):
             if _same(o if not isinstance(o, list) else None, v) and not isinstance(o, list):
                 continue
             if lossless is not None:
-                method = f"{label}，结果等于 frame_index/fps"
+                method = f"{label}，保留变换后的残余抖动（不强制替换为 frame_index/fps）"
             elif {"T_TIMESTAMP_INVALID", "C_FIELD_INVALID"} & rc[r]:
                 method = "按标称周期补值 frame_index/fps（原值无效）"
             else:
@@ -303,7 +341,7 @@ class Repairer:
             n_changed += 1
         if typ != field.type:
             self._schema_log(name, str(field.type), str(typ), "按 info.json 声明类型写回", ";".join(sorted(trig)))
-        self.table = t.set_column(t.column_names.index(name), pa.field(name, typ, field.nullable), pa.array(new_vals, type=typ))
+        self.table = t.set_column(t.column_names.index(name), pa.field(name, typ, field.nullable, metadata=field.metadata), pa.array(new_vals, type=typ))
         self.applied.append(f"timestamp {'：' + label if lossless is not None else '按标称周期规整' + ('（' + label + '）' if label else '')}，"
                             f"改写 {n_changed} 行（原值保留在审计）")
 
@@ -375,15 +413,19 @@ class Repairer:
                 self.rejected.append(f"{col} 重对齐：{why}，不自动移动")
                 self._candidate("S_STREAM_SHIFTED", f"{col} 图像整体移回 {k:+d} 帧", ev_txt, why)
                 continue
-            qual = [e for e in ev if e["qualifies"]]
-            contra = [e for e in ev if not e["agrees"] and e["tier"] == "中" and e["r"] >= self.thr["shift_wrist_min_r"]
-                      and (e["gain"] or 0) >= self.thr["shift_wrist_min_gain"]]
+            # Weak scene correlation remains review evidence, never write authority.
+            def strong(e):
+                return ((e["tier"] == "中" and e["r"] >= self.thr["shift_wrist_min_r"])
+                        or (e["method"].startswith("跨相机") and e["r"] >= self.opts.get("shift_cross_camera_min_r", 0.8))) \
+                    and (e["gain"] or 0) >= self.thr["shift_wrist_min_gain"]
+            qual = [e for e in ev if e["qualifies"] and strong(e)]
+            contra = [e for e in ev if not e["agrees"] and strong(e)]
             if not qual or contra:
                 why = "独立内容证据与 path 偏移矛盾" if contra else "缺少满足门槛的独立内容证据"
                 self.rejected.append(f"{col} 重对齐：{why}（path 偏移 {k:+d}；{ev_txt}），保留隔离")
                 self._candidate("S_STREAM_SHIFTED", f"{col} 图像整体移回 {k:+d} 帧", ev_txt, why)
                 continue
-            strength = "中" if any(e["tier"] == "中" for e in qual) else "弱"
+            strength = "本臂运动统计" if any(e["tier"] == "中" for e in qual) else "跨相机强相关（统计）"
             old = self._load().column(col).to_pylist()
             n = len(old)
             new: list[Any] = []
@@ -395,9 +437,7 @@ class Repairer:
                     new.append({"bytes": None, "path": None})
             for j in range(n):
                 if old[j] != new[j]:
-                    o_path = old[j].get("path") if isinstance(old[j], dict) else None
-                    n_path = new[j].get("path") if isinstance(new[j], dict) else None
-                    self._log(j, col, f"row{j}:{o_path}", f"row{j - k}:{n_path}" if n_path else "缺图(头部/尾部空缺)",
+                    self._log(j, col, old[j], new[j],
                               f"按 path 帧号把图像移回对应行，缺失端置空（内容证据：{strength}）", "S_STREAM_SHIFTED")
             import pyarrow as pa
 
@@ -513,10 +553,11 @@ class Repairer:
                 self._candidate(code, f"{key} 补 {int((~np.isfinite(M[bad])).sum())} 个非有限分量", "稀疏 NaN", fail)
                 continue
             name = self.feats["field_names"][key]
+            old_rows = self._load().column(name).to_pylist()
             self._write_cells(name, cells)
             cast = self._cast_for(name)
             for i, c, o, method in logs:
-                self._log(i, f"{name}[{c}]", float(o), cast(cells[(i, int(c))]), method, code)
+                self._log(i, f"{name}[{c}]", old_rows[i][c], cast(cells[(i, int(c))]), method, code)
             self.applied.append(f"{key} 仅补 {len(cells)} 个非有限分量（单元格级写回，保持 {self._load().schema.field(name).type.value_type}），其余分量不变")
 
     def isolated_spikes(self) -> None:
