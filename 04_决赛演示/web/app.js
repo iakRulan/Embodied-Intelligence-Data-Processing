@@ -91,14 +91,14 @@ function setStep(n) {
   $$('.view').forEach((v) => v.classList.toggle('on', +v.dataset.view === n));
   $$('#steps button').forEach((b) => b.classList.toggle('on', +b.dataset.step === n));
   closeOverlays();
-  if (n === 3) renderCompare();
+  if (n === 4) renderCompare();
   window.scrollTo(0, 0);
 }
 $$('#steps button').forEach((b) => b.addEventListener('click', () => setStep(+b.dataset.step)));
 function markDone() {
   $$('#steps button').forEach((b) => {
     const st = +b.dataset.step;
-    b.classList.toggle('done', (st === 1 && !!S.res.detect) || (st === 2 && !!S.res.govern));
+    b.classList.toggle('done', (st === 1 && !!S.impDone) || (st === 2 && !!S.res.detect) || (st === 3 && !!S.res.govern));
   });
 }
 
@@ -112,14 +112,15 @@ document.addEventListener('keydown', (e) => {
   if (e.target.matches('input, textarea')) return;
   if (e.key === 'Escape') return closeOverlays();
   if (!$('#drawer').hidden || !$('#modal').hidden) return;
-  if (e.key === 'ArrowRight') setStep(Math.min(3, S.step + 1));
+  if (e.key === 'ArrowRight') setStep(Math.min(4, S.step + 1));
   else if (e.key === 'ArrowLeft') setStep(Math.max(1, S.step - 1));
-  else if (/^[1-3]$/.test(e.key)) setStep(+e.key);
+  else if (/^[1-4]$/.test(e.key)) setStep(+e.key);
   else if (e.key === 't' || e.key === 'T') $('#themeBtn').click();
   else if (e.key === 'f' || e.key === 'F') { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen?.(); }
   else if (e.key === ' ' || e.key === 'Enter') {
-    const p = S.step === 1 ? S.panels.detect : S.step === 2 ? S.panels.govern : null;
+    const p = S.step === 2 ? S.panels.detect : S.step === 3 ? S.panels.govern : null;
     if (p && p.state !== 'running') { e.preventDefault(); p.start(); }
+    if (S.step === 1 && !$('#impRun').disabled) { e.preventDefault(); impRun(); }
   }
 });
 
@@ -134,13 +135,13 @@ function hwLabel(t) {
 // ------------------------------------------------------------ run panel
 const STAGE_CFG = {
   detect: {
-    name: '一、检测',
+    name: '二、检测',
     desc: '逐轨迹、逐帧定位时序、同步、内容结构、数据价值四类问题，按证据强弱分级，给出问题区间。只读运行，不生成修复副本。',
     btn: '开始检测', rerun: '重新检测',
     phases: [['episodes', '逐轨迹特征提取与三层证据检测'], ['dedup', '跨轨迹重复关系'], ['outputs', '掩膜与报告写出'], ['summary', '汇总报告']],
   },
   govern: {
-    name: '二、修复',
+    name: '三、修复',
     desc: '证据充分才修：改写只写副本、原始数据只读，副本写后逐单元格回读核验，修复后重新检测；证据不足则拒修隔离。最后切出连续可训练片段。',
     btn: '开始修复', rerun: '重新修复',
     phases: [['episodes', '检测 → 修复 → 回读核验 → 复检'], ['dedup', '跨轨迹去重'], ['outputs', '修复决策、切段与审计写出'], ['summary', '汇总报告']],
@@ -163,9 +164,14 @@ class RunPanel {
     this.btn.addEventListener('click', () => this.start());
     $('.tiles-legend', host).innerHTML = [['--ok', '通过'], ['--warn', '仅价值提示'], ['--bad', '需复核'], ['--cell-empty', '待处理']]
       .map(([v, l]) => `<span><i style="background:var(${v});border:1px solid var(--line-2)"></i>${l}</span>`).join('')
-      + (this.kind === 'govern' ? '<span><i class="dot" style="background:var(--fix)"></i>已生成修复副本</span>' : '');
+      + (this.kind === 'govern' || opts.import ? '<span><i class="dot" style="background:var(--fix)"></i>已生成修复副本</span>' : '');
     this.setPhases(this.cfg.phases);
     this.raf = null;
+    if (opts.import) {
+      host.classList.add('imp-panel');
+      this.buildTiles([]);
+      return;
+    }
     this.buildTiles(Math.max(S.info.dataset.episodes_files || 0, S.info.dataset.meta_episodes || 0) || 89);
     const brief = S.info.runs[stage];
     if (brief) {
@@ -251,9 +257,18 @@ class RunPanel {
 
   async start() {
     if (this.state === 'running') return;
+    if (this.opts.import) return this.opts.onStart && this.opts.onStart();
     if (Object.values(S.panels).some((p) => p !== this && p.state === 'running')) return toast('已有运行在进行中');
     const r = await api(`/api/run?stage=${this.stage}&mode=${S.mode}`, { method: 'POST' });
     if (!r.ok) return toast(r.error || '无法启动');
+    await this.follow();
+  }
+
+  async runImport(r) {
+    this.stage = r.id;
+    this.kind = r.repair ? 'govern' : 'detect';
+    this.setPhases(STAGE_CFG[this.kind].phases);
+    this.buildTiles(r.ids || []);
     await this.follow();
   }
 
@@ -283,7 +298,8 @@ class RunPanel {
       const b = document.createElement('div');
       b.className = 'banner';
       b.innerHTML = `<span>运行没有完成：${esc(this.err || '未知原因')}。上一次成功的结果仍然保留。</span><button class="ghost sm">改用回放</button>`;
-      b.querySelector('button').onclick = () => { $('#modeSeg [data-mode=replay]').click(); this.start(); };
+      if (this.opts.import) b.querySelector('button').remove();
+      else b.querySelector('button').onclick = () => { $('#modeSeg [data-mode=replay]').click(); this.start(); };
       $('.run-head', this.el).after(b);
       if (this.opts.onDone) this.opts.onDone(false);
       return;
@@ -405,6 +421,7 @@ class RunPanel {
     const res = await api(`/api/result?stage=${this.stage}`);
     if (!res.ok) return toast(res.error);
     S.res[this.stage] = res;
+    if (this.opts.import && (!this.n || this.n !== res.episodes.length)) this.buildTiles(res.episodes.map((e) => e.id));
     markDone();
     this.state = 'done';
     this.btn.textContent = this.cfg.rerun;
@@ -535,7 +552,7 @@ function renderDetectResult(res, box, panel) {
       </div>
       <div class="col">${catCard(res)}${scoreCard(res)}${filesCard(res, res.stage, ['report/'], '生成物：检测报告')}</div>
     </div>
-    ${res.stage === 'detect' ? '<div class="cta-row"><button class="cta" data-goto="2">下一步：修复</button><span class="hint">检测只读，原始数据未被改动；修复会在此基础上写副本</span></div>' : ''}`;
+    ${res.stage === 'detect' ? '<div class="cta-row"><button class="cta" data-goto="3">下一步：安全治理</button><span class="hint">检测只读，原始数据未被改动；治理会在此基础上写修复副本</span></div>' : ''}`;
   drawPanorama($('canvas[data-pano]', box), res, 'before', res.stage);
   $$('[data-goto]', box).forEach((b) => b.addEventListener('click', () => setStep(+b.dataset.goto)));
   bindCommon(box, res, res.stage);
@@ -589,12 +606,12 @@ function renderGovernResult(res, box, panel) {
         <div class="card panel"><div class="card-h"><h3>治理决策流向</h3><span class="sub">原始检测状态 → 每条轨迹的去向</span></div><div class="sankey" id="sankey-${panel.stage}"></div></div>
         <div class="card panel"><div class="card-h"><h3>证据不足，主动拒修</h3><span class="sub">${fmt(g.repairs_rejected)} 项 · 按原因</span></div>
           <div class="reasons">${rs.slice(0, 7).map(([k, v]) => `<div class="reason"><div>${esc(k)}<div class="t"><i style="width:${(v / rmax) * 100}%"></i></div></div><b>${v}</b></div>`).join('')}</div>
-          <div class="files-foot"><span>拒修的轨迹保持原样，交由隔离回采或人工复核</span>${res.stage === 'govern' ? '<button class="ghost sm" data-goto="3">看修复说明</button>' : ''}</div>
+          <div class="files-foot"><span>拒修的轨迹保持原样，交由隔离回采或人工复核</span>${res.stage === 'govern' ? '<button class="ghost sm" data-goto="4">看修复说明</button>' : ''}</div>
         </div>
         ${filesCard(res, res.stage, ['governed/'], '生成物：治理叠加层', ['report'])}
       </div>
     </div>
-    ${res.stage === 'govern' ? '<div class="cta-row"><button class="cta" data-goto="3">下一步：对比修复前后</button><span class="hint">每一条修复的问题、做法、依据和注意事项都集中在一页</span></div>' : ''}`;
+    ${res.stage === 'govern' ? '<div class="cta-row"><button class="cta" data-goto="4">下一步：修复说明与前后对比</button><span class="hint">每一条修复的问题、做法、依据和注意事项都集中在一页</span></div>' : ''}`;
   requestAnimationFrame(() => $$('.tier-row .t i', box).forEach((i) => (i.style.width = i.dataset.w + '%')));
   const canvas = $('canvas[data-pano]', box);
   const legend = $('.pano-legend', box);
@@ -1112,7 +1129,7 @@ async function ensureGovern() {
 }
 
 function needGovernHtml(what) {
-  return `<div class="panel empty"><h3>${what}需要先完成修复</h3><p>回到第 2 步运行一次修复，或切换到回放模式。</p><button class="cta" data-goto="2">去修复</button></div>`;
+  return `<div class="panel empty"><h3>${what}需要先完成安全治理</h3><p>回到第 3 步运行一次治理，或切换到回放模式。</p><button class="cta" data-goto="3">去安全治理</button></div>`;
 }
 
 async function renderCompare() {
@@ -1121,7 +1138,7 @@ async function renderCompare() {
   if (!res) {
     list.hidden = true;
     main.innerHTML = needGovernHtml('修复前后对比');
-    $$('[data-goto]', main).forEach((b) => b.addEventListener('click', () => setStep(2)));
+    $$('[data-goto]', main).forEach((b) => b.addEventListener('click', () => setStep(3)));
     return;
   }
   list.hidden = false;
@@ -1474,6 +1491,199 @@ function vizRefused(viz, d) {
   if (spec && n) lineChart($('#vzRef', viz), { n, height: 200, bands, ...spec });
 }
 
+// ------------------------------------------------------------ import testing
+const IMP = { sel: null, mode: 'govern', panel: null, current: null };
+const isMac = () => /^macOS/.test(S.info?.host?.platform || '');
+
+function initImport() {
+  const shell = $('.run-shell[data-stage=import]');
+  IMP.panel = new RunPanel('import', shell, {
+    import: true, kind: 'govern',
+    cfg: { name: '导入测试', desc: '', btn: '开始测试', rerun: '开始测试', phases: STAGE_CFG.govern.phases },
+    onStart: impRun, onDone: () => loadHist(), onResult: impExtras,
+  });
+  S.panels.import = IMP.panel;
+  $('#impPickFile').addEventListener('click', () => (isMac() ? pickNative('file') : $('#impFileInput').click()));
+  $('#impPickDir').addEventListener('click', () => (isMac() ? pickNative('folder') : $('#impDirInput').click()));
+  $('#impFileInput').addEventListener('change', (e) => uploadItems([...e.target.files].map((f) => ({ file: f, rel: f.name }))));
+  $('#impDirInput').addEventListener('change', (e) => uploadItems([...e.target.files].map((f) => ({ file: f, rel: f.webkitRelativePath || f.name }))));
+  const drop = $('#impDrop');
+  drop.addEventListener('click', () => $('#impDirInput').click());
+  drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#impDirInput').click(); } });
+  ['dragenter', 'dragover'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, () => drop.classList.remove('over')));
+  drop.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    const items = await collectDrop(e.dataTransfer);
+    uploadItems(items);
+  });
+  $('#impPath').addEventListener('keydown', (e) => { if (e.key === 'Enter') inspectPath($('#impPath').value); });
+  $('#impCheck').addEventListener('click', () => inspectPath($('#impPath').value));
+  $$('#impMode button').forEach((b) => b.addEventListener('click', () => {
+    IMP.mode = b.dataset.m;
+    $$('#impMode button').forEach((x) => x.classList.toggle('on', x === b));
+  }));
+  $('#impRun').addEventListener('click', impRun);
+  loadHist();
+}
+
+function selMsg(html, cls = '') { $('#impSel').innerHTML = `<div class="sel-card ${cls}">${html}</div>`; }
+
+async function pickNative(kind) {
+  const prev = $('#impSel').innerHTML;
+  selMsg(`<span><span class="spin"></span> 在弹出的系统窗口里选择${kind === 'file' ? '一个 Parquet 文件' : '一个文件夹'}…</span>`);
+  let r;
+  try { r = await api(`/api/import/pick?kind=${kind}`, { method: 'POST' }); } catch (e) { r = { ok: false, error: String(e) }; }
+  if (r.canceled) { $('#impSel').innerHTML = prev; return; }
+  if (!r.ok) {
+    $('#impSel').innerHTML = prev;
+    toast(r.error || '无法打开选择框');
+    (kind === 'file' ? $('#impFileInput') : $('#impDirInput')).click();
+    return;
+  }
+  $('#impPath').value = r.path;
+  inspectPath(r.path);
+}
+
+async function inspectPath(path, extra = {}) {
+  if (!path || !path.trim()) return toast('请先选择或输入路径');
+  selMsg('<span><span class="spin"></span> 读取中</span>');
+  const r = await api(`/api/import/inspect?path=${encodeURIComponent(path.trim())}`);
+  IMP.sel = r.ok ? { ...r, ...extra } : null;
+  renderSel(r);
+}
+
+function renderSel(r) {
+  const run = $('#impRun');
+  if (!r.ok) { run.disabled = true; return selMsg(`<b>无法测试</b><span class="warn">${esc(r.error)}</span>`, 'err'); }
+  const metaLine = (m) => (m && m.episodes != null ? `${fmt(m.episodes)} 条 · ${fmt(m.frames)} 帧（元数据声明）· ${m.fps} fps · ${m.cameras?.length || 0} 路相机 · ${esc(m.format || '')}` : '');
+  const up = r.uploaded ? '<span class="warn">已复制到本次测试目录</span>' : '';
+  if (r.kind === 'multi') {
+    run.disabled = true;
+    selMsg(`<span class="k">文件夹</span><span class="big">${esc(r.name)}</span><span class="warn">这里面有 ${r.choices.length} 个数据集，选一个来测试：</span>
+      ${r.choices.map((c, i) => `<button class="choice" data-i="${i}"><b>${esc(c.name)}</b><span>${fmt(c.episodes)} 条 · ${fmtBytes(c.bytes)}</span></button>`).join('')}
+      <span class="p">${esc(r.path)}</span>`);
+    $$('#impSel .choice').forEach((b) => b.addEventListener('click', () => inspectPath(r.choices[+b.dataset.i].path)));
+    return;
+  }
+  run.disabled = false;
+  if (r.kind === 'file') {
+    selMsg(`<span class="k">单个文件</span><span class="big">${esc(r.name)}</span>
+      <span>${r.readable ? `${fmt(r.rows)} 行 · ${fmtBytes(r.bytes)} · ${epName(r.ids[0])}` : `<b>文件无法读取</b>：${esc(r.read_error)}（照样可以测，算子会报告 C_FILE_UNREADABLE）`}</span>
+      <span class="warn">${r.has_meta ? `所属数据集：${esc(r.root.split('/').pop())}（有 meta/，可做元数据一致性检查）` : '没有找到 meta/：元数据相关检查记为不可评估'}</span>${up}
+      <span class="p">${esc(r.path)}</span>`);
+  } else {
+    selMsg(`<span class="k">${r.kind === 'dataset' ? 'LeRobot 数据集' : '文件夹'} · 批量测试</span><span class="big">${esc(r.name)}</span>
+      <span>${fmt(r.episodes)} 个 Parquet · ${fmtBytes(r.bytes)}</span>
+      ${r.has_meta ? `<span class="warn">${metaLine(r.meta)}</span>` : '<span class="warn">没有 meta/：元数据相关检查记为不可评估</span>'}${up}
+      <span class="p">${esc(r.path)}</span>`);
+  }
+}
+
+async function collectDrop(dt) {
+  const out = [];
+  const entries = [...(dt.items || [])].map((it) => it.webkitGetAsEntry && it.webkitGetAsEntry()).filter(Boolean);
+  const walk = async (entry, prefix) => {
+    if (entry.isFile) {
+      const f = await new Promise((res, rej) => entry.file(res, rej));
+      out.push({ file: f, rel: prefix + f.name });
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      let batch;
+      do {
+        batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+        for (const e of batch) await walk(e, prefix + entry.name + '/');
+      } while (batch.length);
+    }
+  };
+  if (entries.length) for (const e of entries) await walk(e, '');
+  else for (const f of dt.files || []) out.push({ file: f, rel: f.name });
+  return out;
+}
+
+async function uploadItems(items) {
+  const keep = items.filter(({ file, rel }) => /\.(parquet|jsonl?|json)$/i.test(file.name) && !file.name.startsWith('._') && !/__MACOSX/.test(rel));
+  if (!keep.some((x) => /\.parquet$/i.test(x.file.name))) return toast('没有找到 .parquet 文件');
+  const token = [...crypto.getRandomValues(new Uint8Array(8))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const total = keep.reduce((s, x) => s + x.file.size, 0);
+  let sent = 0, dir = '', file = '';
+  for (let i = 0; i < keep.length; i++) {
+    selMsg(`<span><span class="spin"></span> 复制到本次测试目录 ${i + 1} / ${keep.length} · ${fmtBytes(sent)} / ${fmtBytes(total)}</span>`);
+    const r = await fetch(`/api/import/upload?token=${token}&path=${encodeURIComponent(keep[i].rel)}`, { method: 'PUT', body: keep[i].file }).then((x) => x.json());
+    if (!r.ok) return selMsg(`<b>复制失败</b><span class="warn">${esc(r.error)}</span>`, 'err');
+    sent += keep[i].file.size;
+    dir = r.dir;
+    file = r.file;
+  }
+  const single = keep.length === 1;
+  $('#impPath').value = single ? file : dir;
+  inspectPath(single ? file : dir, { uploaded: true, source: single ? keep[0].rel : keep[0].rel.split('/')[0] + '/' });
+}
+
+async function impRun() {
+  if (!IMP.sel || IMP.sel.kind === 'multi') return toast('请先选择要测试的数据');
+  if (Object.values(S.panels).some((p) => p.state === 'running')) return toast('已有运行在进行中');
+  const body = { path: IMP.sel.path, repair: IMP.mode === 'govern', source: IMP.sel.source || IMP.sel.picked || IMP.sel.path, uploaded: !!IMP.sel.uploaded };
+  const r = await api('/api/import/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) {
+    toast(r.error || '无法开始测试');
+    if (r.inspect) { IMP.sel = r.inspect; renderSel(r.inspect); }
+    return;
+  }
+  $('#impEmpty').hidden = true;
+  $('.run-shell[data-stage=import]').hidden = false;
+  $('#impRun').disabled = true;
+  IMP.current = r.id;
+  loadHist();
+  try { await IMP.panel.runImport(r); S.impDone = true; markDone(); } finally { $('#impRun').disabled = false; }
+}
+
+async function loadHist() {
+  const r = await api('/api/import/list');
+  const items = r.items || [];
+  const host = $('#impHist');
+  if (!items.length) { host.innerHTML = '<p class="muted">还没有测试记录</p>'; return; }
+  host.innerHTML = items.map((it) => {
+    const tag = it.kind === 'file' ? '单个文件' : '批量';
+    const mode = it.repair ? '检测 + 修复' : '只检测';
+    const line = it.status === 'ok'
+      ? `${fmt(it.episodes)} 条 · ${fmt(it.seconds, 2)} 秒 · 需复核 ${fmt(it.flagged)} · 训练帧 ${fmt(it.train_frames)}`
+      : it.status === 'running' ? '运行中…' : `<span class="st-failed">失败：${esc(it.error || '')}</span>`;
+    return `<button class="hist ${it.id === IMP.current ? 'on' : ''}" data-id="${it.id}" data-repair="${it.repair ? 1 : 0}" data-ok="${it.status === 'ok' ? 1 : 0}">
+      <span class="h1"><b>${esc(it.name)}</b><span class="muted">${tag} · ${mode}</span></span>
+      <span class="h2">${esc(it.created.slice(5, 16))} · ${line}</span></button>`;
+  }).join('');
+  $$('.hist', host).forEach((b) => b.addEventListener('click', async () => {
+    if (b.dataset.ok !== '1') return;
+    if (IMP.panel.state === 'running') return toast('当前测试还在运行');
+    IMP.current = b.dataset.id;
+    $$('.hist', host).forEach((x) => x.classList.toggle('on', x === b));
+    $('#impEmpty').hidden = true;
+    $('.run-shell[data-stage=import]').hidden = false;
+    await IMP.panel.showRun(b.dataset.id, b.dataset.repair === '1', []);
+  }));
+}
+
+function impExtras(res, box) {
+  const imp = res.import || {};
+  const extra = document.createElement('div');
+  extra.className = 'imp-extra';
+  const one = res.episodes.length === 1 ? res.episodes[0] : null;
+  const man = one && (res.manifest || []).find((m) => +m.episode_index === one.id);
+  const hasCase = man && (man.kind !== '未修改' || man.rejected);
+  extra.innerHTML = `<div class="panel card"><div class="src-line">
+      <span>测试来源</span><code>${esc(imp.source || imp.input || '')}</code>
+      <span>${imp.kind === 'file' ? '单个文件' : '批量'} · ${imp.repair ? '检测 + 修复' : '只检测'} · ${esc(imp.created || '')}</span>
+      ${one ? `<button class="ghost sm" data-one="ep">查看这条轨迹的画面与问题区间</button>` : ''}
+      ${hasCase ? `<button class="ghost sm" data-one="case">查看修复前后</button>` : ''}
+    </div></div>
+    ${res.kind === 'govern' ? '<div class="imp-notes"></div>' : ''}`;
+  box.appendChild(extra);
+  $('[data-one=ep]', extra)?.addEventListener('click', () => openEpisode(res.stage, one.id));
+  $('[data-one=case]', extra)?.addEventListener('click', () => openCaseModal(res.stage, one.id));
+  if (res.kind === 'govern') renderRepairNotes(res.stage, $('.imp-notes', extra), (ep) => openCaseModal(res.stage, ep));
+}
+
 // ------------------------------------------------------------ boot
 async function refreshInfo() {
   S.info = await api('/api/info');
@@ -1491,5 +1701,6 @@ async function refreshInfo() {
     return;
   }
   for (const st of ['detect', 'govern']) S.panels[st] = new RunPanel(st, $(`.run-shell[data-stage=${st}]`));
+  initImport();
   setStep(1);
 })();
