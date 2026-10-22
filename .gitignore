@@ -12,6 +12,10 @@ __pycache__/
 .workbuddy/
 # 算子运行产物
 run_output*/
+# 决赛演示：运行产物与回放记录（含修复副本 Parquet，体积大）
+04_决赛演示/runs/
+04_决赛演示/_to_delete/
+.DS_Store
 # Local Git exchange files, generated submission assets, and credentials
 GitHub同步/
 *.pptx
