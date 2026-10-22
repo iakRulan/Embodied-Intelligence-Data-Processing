@@ -13,11 +13,9 @@
     <span class="brand-sub">具身智能多模态数据质量检测与安全治理</span>
   </div>
   <nav class="steps" id="steps" aria-label="演示步骤">
-    <button data-step="1"><b>1</b>数据与成绩</button>
-    <button data-step="2"><b>2</b>质量检测</button>
-    <button data-step="3"><b>3</b>安全治理</button>
-    <button data-step="4"><b>4</b>修复前后</button>
-    <button data-step="5"><b>5</b>导入测试</button>
+    <button data-step="1"><b>1</b>检测</button>
+    <button data-step="2"><b>2</b>修复</button>
+    <button data-step="3"><b>3</b>对比</button>
   </nav>
   <div class="top-right">
     <div class="seg" id="modeSeg" role="radiogroup" aria-label="运行方式">
@@ -29,80 +27,19 @@
 </header>
 
 <main id="app">
-  <!-- 1 数据与成绩 -->
+  <!-- 1 检测 -->
   <section class="view" data-view="1">
-    <div class="ov-grid">
-      <div class="ov-main">
-        <figure class="hero" id="hero">
-          <div class="hero-frames">
-            <div class="hf"><img alt="场景相机画面" data-cam="image"><span>场景相机</span></div>
-            <div class="hf"><img alt="左腕相机画面" data-cam="left_wrist_image"><span>左腕相机</span></div>
-            <div class="hf"><img alt="右腕相机画面" data-cam="right_wrist_image"><span>右腕相机</span></div>
-          </div>
-          <figcaption id="heroCap"></figcaption>
-        </figure>
-        <div class="ds">
-          <h1 id="dsTitle">赛题公开测试集</h1>
-          <div class="ds-figs" id="dsFigs"></div>
-          <p class="ds-spec" id="dsSpec"></p>
-          <ol class="flow" id="flow"></ol>
-          <div class="cta-row">
-            <button class="cta" id="goDetect">开始质量检测</button>
-            <span class="hint">检测阶段只读，不改写任何原始数据</span>
-          </div>
-        </div>
-      </div>
-      <aside class="ov-side panel" id="official"></aside>
-    </div>
-  </section>
-
-  <!-- 2 质量检测 / 3 安全治理（共用运行面板） -->
-  <section class="view" data-view="2">
     <div class="run-shell" data-stage="detect"></div>
   </section>
-  <section class="view" data-view="3">
+  <section class="view" data-view="2">
     <div class="run-shell" data-stage="govern"></div>
   </section>
 
-  <!-- 4 修复前后 -->
-  <section class="view" data-view="4">
+  <!-- 3 对比 -->
+  <section class="view" data-view="3">
     <div class="cmp-grid">
       <aside class="cmp-list panel" id="cmpList"></aside>
       <div class="cmp-main" id="cmpMain"></div>
-    </div>
-  </section>
-  <!-- 5 导入测试 -->
-  <section class="view" data-view="5">
-    <div class="run-head"><div class="run-title"><h2>导入测试</h2>
-      <p>现场导入任意 LeRobot 数据：单个 Parquet 文件逐条测试，或选一个文件夹批量测试。原始数据只读，每次测试的结果单独保存，可随时回看。</p></div></div>
-    <div class="imp-grid">
-      <aside class="imp-side">
-        <div class="panel card">
-          <div class="step-h"><b>1</b>选择数据</div>
-          <div class="imp-btns">
-            <button class="ghost" id="impPickFile">选择单个文件</button>
-            <button class="ghost" id="impPickDir">选择文件夹</button>
-          </div>
-          <div class="drop" id="impDrop" tabindex="0"><span>把 .parquet 文件或数据集文件夹拖到这里</span><small>拖入的文件会先复制到本次测试目录</small></div>
-          <div class="imp-path"><input id="impPath" type="text" placeholder="或粘贴路径后回车" spellcheck="false" aria-label="数据路径"><button class="ghost sm" id="impCheck">读取</button></div>
-          <input type="file" id="impFileInput" accept=".parquet" hidden>
-          <input type="file" id="impDirInput" webkitdirectory multiple hidden>
-          <div id="impSel" class="imp-sel"></div>
-        </div>
-        <div class="panel card">
-          <div class="step-h"><b>2</b>处理方式</div>
-          <div class="seg imp-mode" id="impMode" role="radiogroup"><button data-m="govern" class="on">检测 + 修复</button><button data-m="detect">只检测</button></div>
-          <button class="cta imp-run" id="impRun" disabled>开始测试</button>
-        </div>
-        <div class="panel card">
-          <div class="step-h"><b>3</b>测试记录</div>
-          <div id="impHist" class="imp-hist"></div>
-        </div>
-      </aside>
-      <div class="imp-main">
-        <div class="panel empty" id="impEmpty"><h3>先在左侧选择要测试的数据</h3><p>单个文件适合现场挑一条轨迹看细节；文件夹会把其中所有 Parquet 一次性批量检测。</p></div>
-        <div class="run-shell" data-stage="import" hidden></div>
-      </div>
     </div>
   </section>
 </main>
