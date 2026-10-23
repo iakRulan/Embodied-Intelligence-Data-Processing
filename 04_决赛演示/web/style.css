@@ -907,3 +907,6 @@ article.fix header { display: flex; align-items: center; gap: 10px; flex-wrap: w
 .gh-ba { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 .gh-ba span { border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: 4px 12px; font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .gh-ba b { color: var(--ink); }
+.batch-h { font-size: 18px; margin: 6px 4px -4px; }
+.bc-head .muted { font-size: 13px; }
+.story-facts b { color: var(--ink); }

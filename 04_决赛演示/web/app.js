@@ -2584,15 +2584,16 @@ async function renderImportStory(res, box, e, imp, token) {
     <section class="story-sec panel">
       <div class="story-rail">03</div>
       <div class="story-content">
-        <h3>修了哪几帧，还剩多少帧能训练</h3>
+        <h3>${detectOnly ? '不修复时，能训练多少帧' : '修了哪几帧，还剩多少帧能训练'}</h3>
         <div class="story-keep">
           <div class="keep-big"><b>${fmt(keep)}</b><span>/ ${fmt(n)} 帧可训练</span></div>
           <p>${esc(keepText)}</p>
         </div>
         ${storyStrip(d, n, keep)}
         <div class="story-legend"><span><i class="k"></i>进入训练</span><span><i class="r"></i>修复后进入训练</span><span><i class="v"></i>有效但未成段</span><span><i class="x"></i>阻断 / 缺图</span></div>
-        <div class="story-facts"><span>${scoreTxt}</span><span>改写 ${fmt(audit.length)} 格</span><span>处理 ${fmt(e.seconds, 2)} 秒</span><span>${esc(e.policy || '')}</span></div>
+        <div class="story-facts"><span>${scoreTxt}</span>${detectOnly ? '' : `<span>问题码 ${fmt(codes.length)} → <b>${fmt((e.final_codes || []).length)}</b> 种</span><span>带问题码的帧 ${fmt(e.flagged_frames)} → <b>${fmt(res.compare?.flag_rows_after ?? '—')}</b></span>`}<span>改写 ${fmt(audit.length)} 格</span><span>处理 ${fmt(e.seconds, 2)} 秒</span><span>${esc(e.policy || '')}</span></div>
         <div class="story-actions">
+          ${!detectOnly && (fixed || m.rejected) ? '<button class="ghost sm" data-case>看修复前后完整对比</button>' : ''}
           ${audit.length ? '<button class="ghost sm" data-preview="governed/repair_audit.csv">查看逐格审计</button>' : ''}
           <button class="ghost sm" data-full="ep">查看完整轨迹（三路相机 + 信号曲线）</button>
         </div>
@@ -2644,43 +2645,78 @@ async function renderImportStory(res, box, e, imp, token) {
   $('#impRow', box).addEventListener('input', (ev) => { stop(); setRow(+ev.target.value); });
   $$('[data-preview]', box).forEach((b) => b.addEventListener('click', () => previewFile(res.stage, b.dataset.preview)));
   $$('[data-full]', box).forEach((b) => b.addEventListener('click', () => openEpisode(res.stage, e.id, row)));
+  $$('[data-case]', box).forEach((b) => b.addEventListener('click', () => openCaseModal(res.stage, e.id)));
   setRow(row);
 }
 
 function renderImportBatch(res, box, imp) {
   const eps = res.episodes || [];
   const man = res.manifest || [];
-  const flagged = eps.filter((e) => (e.codes || []).length || e.rejected);
-  const fixed = eps.filter((e) => e.repaired || man.some((m) => +m.episode_index === e.id && m.kind && m.kind !== '未修改'));
+  const repair = res.kind === 'govern';
+  const C = res.compare;
+  const manOf = (id) => man.find((x) => +x.episode_index === id);
+  const review = eps.filter((e) => e.status === '需复核').length;
+  const reviewAfter = eps.filter((e) => e.final_status === '需复核').length;
+  const fixed = eps.filter((e) => { const m = manOf(e.id); return m && m.kind && m.kind !== '未修改'; });
   const keep = eps.reduce((s, e) => s + (e.train_frames || 0), 0);
   const rows = eps.reduce((s, e) => s + (e.rows || 0), 0);
+  const flagRows = res.detection?.flagged_frames;
   const desc = (e) => {
-    const m = man.find((x) => +x.episode_index === e.id);
+    const m = manOf(e.id);
     if (m) {
       if (m.kind !== '未修改') return fixLabel(m);
-      if (m.rejected) return reasonLabel(m.rejected.split('；')[0]);
+      if (m.rejected) return '拒修：' + reasonLabel(m.rejected.split('；')[0]);
     }
-    if (!(e.codes || []).length) return '未命中阻断问题';
+    if (!(e.codes || []).length) return '未命中问题';
     return codeLine({ flagged: e.flagged_frames, rows: e.rows }, e.codes);
   };
+  const what = (e) => {
+    const m = manOf(e.id);
+    if (!m || m.kind === '未修改') return '';
+    if (+m.values_changed > 0) return ` · 改写 ${fmt(+m.values_changed)} 格`;
+    return m.kind === '仅元数据补丁' ? ' · 只改元数据' : ' · 类型转换，数值不变';
+  };
+  const openEp = (id) => {
+    const m = manOf(id);
+    if (repair && m && (m.kind !== '未修改' || m.rejected)) openCaseModal(res.stage, id);
+    else openEpisode(res.stage, id);
+  };
+  const head = repair
+    ? `${fmt(eps.length)} 条轨迹：检测出 ${fmt(review)} 条需复核，修了 ${fmt(fixed.length)} 条，复检后还剩 ${fmt(reviewAfter)} 条需复核。`
+    : `${fmt(eps.length)} 条轨迹：${fmt(review)} 条需复核，${fmt(flagRows)} 行被逐帧定位。`;
   box.innerHTML = `<div class="story">
     <header class="story-head panel">
-      <div class="story-kicker">导入测试 · 文件夹 · ${esc(imp.created || '')}</div>
-      <h2>${fmt(eps.length)} 条轨迹里，${fmt(flagged.length)} 条查出了问题；修了 ${fmt(fixed.length)} 条。</h2>
-      <p class="story-lead">最终 ${fmt(keep)} / ${fmt(rows)} 帧可训练。下面每条轨迹一句话；点开看三路画面、问题区间和修复前后。</p>
+      <div class="story-kicker">导入测试 · 文件夹 · ${repair ? '检测 + 修复' : '只检测'} · ${esc(imp.created || '')}</div>
+      <h2>${head}</h2>
+      <p class="story-lead">${repair ? `最终 ${fmt(keep)} / ${fmt(rows)} 帧可训练。下面先看修复前后全量对比，再看每条一句话；点开看三路画面和修复前后。` : '下面是逐帧检测全景和每条一句话；点开看三路画面、信号曲线和问题区间。'}</p>
       <p class="story-src">${esc(imp.source || imp.input || '')}</p>
+      ${repair ? '<div class="story-head-right"><button class="ghost sm" data-notes>本次修复说明</button></div>' : ''}
     </header>
+    ${repair && C ? overallHtml(res, { compareHint: '点任一行看修复前后画面' }) : `<div class="res-grid">
+        <div class="card panel"><div class="card-h"><h3>帧级质量全景：每行一条轨迹，每格一帧</h3></div>
+          <div class="legend" style="margin-bottom:10px">${CATS.map((c) => `<span><i style="background:var(${CAT_VAR[c]})"></i>${c}</span>`).join('')}<span><i style="background:var(--cell)"></i>未命中</span></div>
+          <div class="pano-wrap"><canvas data-pano="before"></canvas></div></div>
+        <div class="col">${catCard(res)}</div>
+      </div>`}
+    <h3 class="batch-h">逐条结果（${fmt(eps.length)} 条）</h3>
     <div class="batch-list">${eps.map((e) => {
-      const m = man.find((x) => +x.episode_index === e.id);
-      const cells = m?.values_changed || m?.audit_count || '';
+      const m = manOf(e.id);
+      const tag = !repair ? '' : m && m.kind !== '未修改' ? '<span class="badge b-fix"><i></i>已修复</span>' : m && m.rejected ? '<span class="badge b-hint"><i></i>拒修</span>' : '';
       return `<button class="batch-case panel" data-ep="${e.id}">
-        <div class="bc-head"><b>${epName(e.id)}</b><span class="badge ${e.final_status === '通过' ? 'b-ok' : 'b-bad'}"><i></i>${esc(e.final_status || e.status)}</span><span class="bc-keep">${fmt(e.train_frames)} / ${fmt(e.rows)} 帧可训练</span></div>
+        <div class="bc-head"><b>${epName(e.id)}</b><span class="badge b-${STATUS_CLS[e.status] || 'bad'}"><i></i>${esc(e.status)}</span>${repair ? `<span class="muted">→</span><span class="badge b-${STATUS_CLS[e.final_status] || 'bad'}"><i></i>${esc(e.final_status)}</span>` : ''}${tag}<span class="bc-keep">${fmt(e.train_frames)} / ${fmt(e.rows)} 帧可训练</span></div>
         <p>${esc(desc(e))}</p>
-        <small>${esc(e.policy || '')}${cells ? ` · 改写 ${fmt(cells)} 格` : ''} · 复检 ${fmt(e.score, 2)} → ${fmt(e.final_score, 2)} 分</small>
+        <small>${esc(e.policy || '')}${what(e)}${repair ? ` · 质量分 ${fmt(e.score, 2)} → ${fmt(e.final_score, 2)}` : ` · 质量分 ${fmt(e.score, 2)}`}</small>
       </button>`;
     }).join('')}</div>
   </div>`;
-  $$('.batch-case', box).forEach((b) => b.addEventListener('click', () => openEpisode(res.stage, +b.dataset.ep)));
+  if (repair && C) bindOverall(box, res, openEp);
+  else $$('canvas[data-pano]', box).forEach((c) => drawPanorama(c, res, 'before', res.stage));
+  $$('[data-act=codes]', box).forEach((b) => b.addEventListener('click', () => showCodes(res)));
+  $$('[data-notes]', box).forEach((b) => b.addEventListener('click', () => {
+    openModal('<div id="mNotes"></div>');
+    renderRepairNotes(res.stage, $('#mNotes'), (ep) => openCaseModal(res.stage, ep));
+  }));
+  $$('.batch-case', box).forEach((b) => b.addEventListener('click', () => openEp(+b.dataset.ep)));
 }
 
 function splitClausesJs(text) {

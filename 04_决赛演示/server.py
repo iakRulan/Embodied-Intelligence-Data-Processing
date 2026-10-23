@@ -715,7 +715,7 @@ def before_after(stage: str, s: dict, eps: dict[int, dict], detect_only_total=No
         "cat_rows_before": dict(cat_b), "cat_rows_after": dict(cat_a),
         "cat_eps_before": dict(cat_ep_b), "cat_eps_after": dict(cat_ep_a),
         "score_mean_before": mean(sc_b), "score_mean_after": mean(sc_a),
-        "train_base": tf.get("原本可用"), "train_detect_only": detect_only_total, "train_total": tf.get("total"),
+        "train_base": tf.get("原本可用", 0) if tf else None, "train_detect_only": detect_only_total, "train_total": tf.get("total"),
         "train_parts": {k: v for k, v in tf.items() if k != "total"},
         "codes": code_rows, "changed": changed,
     }
