@@ -152,6 +152,14 @@ def build_synthetic(ref_root: Path, base_ep: int, out_root: Path, off: int, thr:
     def blur(b):
         return _png(np.asarray(Image.open(io.BytesIO(b)).convert("RGB").filter(ImageFilter.GaussianBlur(4))))
     save(28, put(base, "image", [dict(im[i], bytes=blur(im[i]["bytes"])) if 90 <= i < 105 else im[i] for i in range(n)]), ["C_IMAGE_BLUR"], "clips", note="主相机模糊 15 帧", rows=range(90, 105))
+
+    def mosaic(b, k=16):
+        x = Image.open(io.BytesIO(b)).convert("RGB")
+        w, h = x.size
+        lo = x.resize((max(1, w // k), max(1, h // k)), Image.Resampling.BILINEAR)
+        return _png(np.asarray(lo.resize((w, h), Image.Resampling.NEAREST)))
+    save(36, put(base, "image", [dict(im[i], bytes=mosaic(im[i]["bytes"])) if 60 <= i < 80 else im[i] for i in range(n)]), ["C_IMAGE_MOSAIC"], "clips",
+         note="主相机马赛克 20 帧（压到 1/16 分辨率再最近邻放大，类 ep08）", rows=range(60, 80), allow={"C_IMAGE_BLUR"})
     rw = col(base, "right_wrist_image")
     frz0 = _decode(rw[100]["bytes"]).astype(int)
     for kk, D in ((29, 15), (32, 8), (33, 30)):

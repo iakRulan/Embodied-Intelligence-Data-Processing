@@ -14,7 +14,7 @@ evidence tier and one scope:
 """
 from __future__ import annotations
 
-VERSION = "RefSync-QA-v3.2"
+VERSION = "RefSync-QA-v3.2.1"
 
 CAT_T, CAT_S, CAT_C, CAT_V = "时序", "同步", "内容结构", "数据价值"
 CATEGORIES = [CAT_T, CAT_S, CAT_C, CAT_V]
@@ -66,6 +66,7 @@ CODES: dict[str, tuple[str, str, str, bool, str]] = {
     "C_IMAGE_SCREEN": (CAT_C, "high", "row", True, "黑屏/白屏/低对比度画面"),
     "C_IMAGE_DUPLICATE": (CAT_C, "deterministic", "row", True, "与上一帧字节级完全相同（非纯色）"),
     "C_IMAGE_BLUR": (CAT_C, "threshold", "row", True, "清晰度低于参考集下界（模糊）"),
+    "C_IMAGE_MOSAIC": (CAT_C, "high", "row", True, "画面成块马赛克（有效分辨率过低：相邻像素大面积完全相同，只在少数网格线上变化）"),
     # ---------------- 内容结构: joint / numeric ----------------
     "J_DIM_MISMATCH": (CAT_C, "deterministic", "row", True, "state/actions 维度与 schema 不符"),
     "J_STATE_NONFINITE": (CAT_C, "deterministic", "row", True, "state 含 NaN/Inf"),
@@ -169,6 +170,10 @@ FALLBACK_THRESHOLDS = {
     "screen_bright_fraction": 0.95,
     "screen_std_luma": 5.0,
     "blur": {},
+    # 马赛克（v3.2.1）：参考集 20 条逐帧实测 flat 最高 0.329、grid 最低 1.000；
+    # 16 倍最近邻放大的马赛克 flat ≈ 0.94、grid ≈ 0.06。两项同时满足才判定。
+    "mosaic_flat_min": 0.6,
+    "mosaic_grid_max": 0.5,
     "freeze_motion": 0.3,
     "freeze_min_run": 10,
     "arm_moving_step": 0.01,

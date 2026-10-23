@@ -383,6 +383,11 @@ def analyse(feats: dict[str, Any], ep_id: int, ds, thr: dict[str, Any], opts: di
             R.row(blur, "C_IMAGE_BLUR", col)
         else:
             R.not_evaluable.append(f"模糊检测({col} 无参考标定)")
+        # 马赛克：块内像素完全相同、只在少数网格线上变化（不依赖参考标定，阈值见 config.FALLBACK_THRESHOLDS）
+        flat = sf.get("flat", np.full(n, np.nan))
+        grid = sf.get("grid", np.full(n, np.nan))
+        mosaic = dec & ~screen & ~shape_bad & (flat >= thr.get("mosaic_flat_min", 0.6)) & (grid <= thr.get("mosaic_grid_max", 0.5))
+        R.row(mosaic, "C_IMAGE_MOSAIC", col)
         # frozen stream while its arm moves (solid-colour / byte-identical frames excluded)
         arm = cam_arm.get(col, None)
         if layout_ok and steps:

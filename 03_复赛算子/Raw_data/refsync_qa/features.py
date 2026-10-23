@@ -136,6 +136,16 @@ def _image_metrics(raw: bytes | None) -> dict[str, Any] | None:
     except Exception:  # noqa: BLE001 - corrupt payload is itself the finding
         return out
     gray = 0.299 * rgb[..., 0] + 0.587 * rgb[..., 1] + 0.114 * rgb[..., 2]
+    # 马赛克 / 有效分辨率过低：相邻像素完全相同的比例（flat），以及有像素变化的网格线占比（grid）。
+    # 低分辨率画面按最近邻放大后，块内像素完全相同、只在块边界的少数网格线上变化：flat 高、grid 低；
+    # 这种画面的块边界很硬，拉普拉斯方差反而偏高，单靠清晰度指标会漏掉。
+    eqh = (rgb[:, 1:] == rgb[:, :-1]).all(axis=2)
+    eqv = (rgb[1:, :] == rgb[:-1, :]).all(axis=2)
+    if eqh.size and eqv.size:
+        flat = float((eqh.mean() + eqv.mean()) / 2.0)
+        grid = float((((~eqh).mean(axis=0) > 0.02).mean() + ((~eqv).mean(axis=1) > 0.02).mean()) / 2.0)
+    else:
+        flat, grid = 0.0, 1.0
     gx = np.diff(gray, axis=1)
     gy = np.diff(gray, axis=0)
     c = gray[1:-1, 1:-1]
@@ -152,6 +162,8 @@ def _image_metrics(raw: bytes | None) -> dict[str, Any] | None:
         bright=float(np.mean(gray >= 245.0)),
         grad=float((np.abs(gx).mean() + np.abs(gy).mean()) / 2.0),
         lap=float(lap.var()),
+        flat=flat,
+        grid=grid,
         ahash=np.packbits(small.ravel() >= float(small.mean())).tobytes().hex(),
         g64=g64,
     )
@@ -167,6 +179,7 @@ def _stream_features(values: list[Any]) -> dict[str, Any]:
         "mean": np.full(n, np.nan), "std": np.full(n, np.nan),
         "dark": np.full(n, np.nan), "bright": np.full(n, np.nan),
         "grad": np.full(n, np.nan), "lap": np.full(n, np.nan),
+        "flat": np.full(n, np.nan), "grid": np.full(n, np.nan),
         "bytes": np.zeros(n),
         "motion": np.full(n, np.nan),  # mean |gray64_t - gray64_{t-1}| (previous row only)
         "path_frame": np.full(n, np.nan),
@@ -200,7 +213,7 @@ def _stream_features(values: list[Any]) -> dict[str, Any]:
             prev = None
             continue
         f["decode_ok"][i] = True
-        for k in ("w", "h", "ch", "mean", "std", "dark", "bright", "grad", "lap"):
+        for k in ("w", "h", "ch", "mean", "std", "dark", "bright", "grad", "lap", "flat", "grid"):
             f[k][i] = mt[k]
         f["ahash"][i] = mt["ahash"]
         if prev is not None:
