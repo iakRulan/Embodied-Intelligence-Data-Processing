@@ -723,6 +723,7 @@ article.fix header { display: flex; align-items: center; gap: 10px; flex-wrap: w
 .story-lead { font-size: 20px; line-height: 1.65; max-width: 82ch; }
 .story-verdict { font-size: 17px; line-height: 1.7; padding: 12px 16px; border-radius: var(--r-s); background: var(--raised); border-left: 3px solid var(--fix); }
 .story-verdict.refused { border-left-color: var(--bad); }
+.story-verdict.ok { border-left-color: var(--ok); }
 .story-cams { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; max-width: 1100px; }
 .story-cam { position: relative; margin: 0; background: var(--cell-empty); border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
 .story-cam img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; }

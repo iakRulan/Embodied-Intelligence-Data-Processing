@@ -1450,7 +1450,7 @@ function captionFor(ev, kind) {
       return { text: `${ep} · ${s} → 拒修`, meta: `${evidence} · 保持原样，问题段不进入训练` };
     }
     if (!finalCodes.length) return { text: `${ep} · 通过`, meta: `${fmt(ev.rows)} 行全部可进入训练` };
-    return { text: `${ep} · ${codeLine(ev, finalCodes, shift)}`, meta: '证据不足或无需改写，保持原样' };
+    return { text: `${ep} · ${codeLine(ev, finalCodes, shift)}`, meta: '这类问题没有可用的修复方法，保持原样；问题帧不进入训练' };
   }
   if (!codes.length) return { text: `${ep} · 未命中阻断问题`, meta: `${fmt(ev.rows)} 行 · ${fmt(ev.seconds, 2)} 秒` };
   const marked = ev.flagged ? `${fmt(ev.flagged)} 行被标记` : '整条轨迹级问题';
@@ -2351,7 +2351,7 @@ function renderImportResult(res, box, panel) {
   else renderImportBatch(res, box, imp);
 }
 
-function importType(d, e) {
+function importType(d, e, dict = {}) {
   const m = d.manifest || {};
   const fixed = m.kind && m.kind !== '未修改';
   const text = fixed ? (m.applied || '') : (m.rejected || '');
@@ -2360,6 +2360,10 @@ function importType(d, e) {
   if (fixed && m.kind === '仅元数据补丁') return 'meta';
   if (fixed) return 'cells';
   if (m.rejected) return 'refused';
+  // 没有修复、也没有拒修记录：要么真的干净，要么是"没有修复手段"的问题（黑屏、模糊、马赛克…），不能当成干净
+  const codes = e.final_codes?.length ? e.final_codes : (e.codes || []);
+  if (codes.some((c) => dict[c]?.blocks !== false)) return 'norepair';
+  if (codes.length) return 'hint';
   return 'clean';
 }
 
@@ -2443,7 +2447,7 @@ async function renderImportStory(res, box, e, imp, token) {
   const rr = crossR(text);
   const arm = armR(text);
   const keep = Math.max(0, Math.min(n, e.train_frames || 0));
-  let type = importType(d, e);
+  let type = importType(d, e, res.code_dict || {});
   if (detectOnly) type = 'detect-only';
   if (type === 'cells' && !audit.length) type = 'fixed';
   const camCn = shift ? (CAM_CN[shift.cam] || shift.cam) : '';
@@ -2521,6 +2525,20 @@ async function renderImportStory(res, box, e, imp, token) {
       ['实际行数', `${fmt(n)} 行`, true],
       ['Parquet', '未改动', true],
     ];
+  } else if (type === 'norepair') {
+    const dict = res.code_dict || {};
+    const blocking = codes.filter((c) => dict[c]?.blocks !== false);
+    problem = `${codeLine({ flagged: e.flagged_frames, rows: n }, blocking.length ? blocking : codes)}：${fmt(e.flagged_frames)} / ${fmt(n)} 帧被标记。`;
+    action = '这类问题没有安全的修复方法（不能凭空生成画面或数据），不修；被标记的帧不进入训练。';
+    evidence = [
+      ['检测结论', (blocking.length ? blocking : codes).join('、'), false],
+      ['被标记帧', `${fmt(e.flagged_frames)} / ${fmt(n)} 帧`, false],
+      ['修复', '不在可修复范围，保持原样', null],
+    ];
+  } else if (type === 'hint') {
+    problem = `只有数据价值提示（不阻断训练）：${codes.map((c) => CODE_CN[c] || c).join('、')}。`;
+    action = '数据价值提示不影响训练，不需要修复。';
+    evidence = [['检测结论', codes.join('、'), null]];
   } else if (type === 'refused') {
     problem = `检测到问题，但证据不足：${reasonLabel((m.rejected || '').split('；')[0])}。`;
     action = '没修。问题段不进入训练，整条交由人工复核或隔离回采。';
@@ -2568,7 +2586,7 @@ async function renderImportStory(res, box, e, imp, token) {
       <div class="story-rail">02</div>
       <div class="story-content">
         <h3>修了，还是没修？</h3>
-        <p class="story-verdict ${fixed ? 'fixed' : 'refused'}">${esc(action)}</p>
+        <p class="story-verdict ${fixed ? 'fixed' : type === 'clean' || type === 'hint' ? 'ok' : 'refused'}">${esc(action)}</p>
         ${type === 'shift-fixed' ? `<div class="sameframe">
           <figure class="sameframe-item"><img data-side="raw" alt=""><figcaption>修复前 · 第 <em class="frame-no">—</em> 帧</figcaption></figure>
           <div class="sameframe-arrow">移回 ${Math.abs(off)} 帧<br><span>同一行 →</span></div>
