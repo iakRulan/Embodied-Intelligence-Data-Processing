@@ -499,9 +499,10 @@ def code_dictionary(stage: str) -> dict[str, dict]:
     return cached(stage, "codes", build)
 
 
-def mask_strings(stage: str, d: Path, eps: dict[int, dict]) -> tuple[dict, dict]:
+def mask_strings(stage: str, d: Path, eps: dict[int, dict]) -> tuple[dict, dict, dict]:
     """before: per-row category bitmask (hex char; T=1 S=2 C=4 V=8; '.' no data)
-    after : per-row governance state  k=train_keep  r=train_keep & repaired  v=valid not in clip  x=blocked  d=dedup drop"""
+    after : per-row governance state  k=train_keep  r=train_keep & repaired  v=valid not in clip  x=blocked  d=dedup drop
+    final : per-row re-detection after repair  r=row changed by a repair, otherwise the category bitmask of final codes"""
     ff = frame_rows(stage)
     bit = {"时序": 1, "同步": 2, "内容结构": 4, "数据价值": 8}
     audit_rows: dict[int, set] = defaultdict(set)
@@ -513,14 +514,15 @@ def mask_strings(stage: str, d: Path, eps: dict[int, dict]) -> tuple[dict, dict]
                     audit_rows[int(a["episode_index"])].add(int(a["row"]))
             except (ValueError, KeyError):
                 pass
-    before, after = {}, {}
+    before, after, final = {}, {}, {}
     for ep, er in eps.items():
         rows = ff.get(ep, [])
         n = int(er.get("rows") or 0)
         if not rows or n == 0:
-            before[ep], after[ep] = "", ""
+            before[ep], after[ep], final[ep] = "", "", ""
             continue
         b = ["0"] * n
+        f = ["0"] * n
         aft = ["x"] * n
         for r in rows:
             i = int(r["row"])
@@ -530,6 +532,10 @@ def mask_strings(stage: str, d: Path, eps: dict[int, dict]) -> tuple[dict, dict]
             for c in split_codes(r.get("issue_codes", "")):
                 m |= bit.get(cat_of(c), 0)
             b[i] = format(m, "x")
+            m = 0
+            for c in split_codes(r.get("final_issue_codes", "")):
+                m |= bit.get(cat_of(c), 0)
+            f[i] = "r" if i in audit_rows.get(ep, ()) else format(m, "x")
         mp = d / "governed" / "quality_masks" / f"episode_{ep:06d}.csv"
         if mp.exists():
             for r in read_csv(mp):
@@ -542,8 +548,8 @@ def mask_strings(stage: str, d: Path, eps: dict[int, dict]) -> tuple[dict, dict]
                     aft[i] = "d"
                 elif r.get("frame_valid") == "True":
                     aft[i] = "v"
-        before[ep], after[ep] = "".join(b), "".join(aft)
-    return before, after
+        before[ep], after[ep], final[ep] = "".join(b), "".join(aft), "".join(f)
+    return before, after, final
 
 
 def artifacts(stage: str) -> list[dict]:
@@ -577,7 +583,7 @@ def build_result(stage: str) -> dict:
     s = json.loads((d / "report" / "summary.json").read_text(encoding="utf-8"))
     eps = episode_rows(stage)
     codes = code_dictionary(stage)
-    before, after = mask_strings(stage, d, eps)
+    before, after, final = mask_strings(stage, d, eps)
     # frames per category (rows with >=1 code of that category, original detection)
     ff = frame_rows(stage)
     cat_frames = Counter()
@@ -617,7 +623,7 @@ def build_result(stage: str) -> dict:
         "governance": s.get("governance"), "dataset_value": s.get("dataset_value"),
         "thresholds_sha256": s.get("calibration_provenance", {}).get("thresholds_sha256"),
         "processing_errors": s.get("processing_errors"),
-        "episodes": ep_list, "mask_before": before, "mask_after": after,
+        "episodes": ep_list, "mask_before": before, "mask_after": after, "mask_final": final,
         "artifacts": artifacts(stage),
         "code_dict": {c: {"category": m.get("category"), "tier": m.get("evidence_tier"), "scope": m.get("scope"),
                           "blocks": m.get("blocks_training") == "True", "description": m.get("description")}
@@ -640,7 +646,79 @@ def build_result(stage: str) -> dict:
                 res["detect_only_policy"] = ds.get("governance", {}).get("policy_counts")
             except (OSError, ValueError):
                 pass
+        res["compare"] = before_after(stage, s, eps, res.get("detect_only_train_frames"))
     return clean(res)
+
+
+def before_after(stage: str, s: dict, eps: dict[int, dict], detect_only_total=None) -> dict:
+    """修复前（原始检测）vs 修复后（对修复副本重新检测）。全部来自算子自己的输出，不需要任何真值标签。"""
+    ff = frame_rows(stage)
+    blocks = {c: m.get("blocks_training") == "True" for c, m in code_dictionary(stage).items()}
+    desc = {c: m.get("description") for c, m in code_dictionary(stage).items()}
+    cat_b, cat_a = Counter(), Counter()
+    code_fr_b, code_fr_a = Counter(), Counter()
+    rows_b = rows_a = blk_b = blk_a = 0
+    for rows in ff.values():
+        for r in rows:
+            cb, ca = split_codes(r.get("issue_codes")), split_codes(r.get("final_issue_codes"))
+            rows_b += bool(cb)
+            rows_a += bool(ca)
+            blk_b += any(blocks.get(c, False) for c in cb)
+            blk_a += any(blocks.get(c, False) for c in ca)
+            for c in {cat_of(x) for x in cb}:
+                cat_b[c] += 1
+            for c in {cat_of(x) for x in ca}:
+                cat_a[c] += 1
+            for c in cb:
+                code_fr_b[c] += 1
+            for c in ca:
+                code_fr_a[c] += 1
+    code_ep_b, code_ep_a = Counter(), Counter()
+    cat_ep_b, cat_ep_a = Counter(), Counter()
+    st_b, st_a = Counter(), Counter()
+    sc_b, sc_a = [], []
+    changed = []
+    for ep, r in sorted(eps.items()):
+        cb, ca = split_codes(r.get("issue_codes")), split_codes(r.get("final_issue_codes"))
+        for c in cb:
+            code_ep_b[c] += 1
+        for c in ca:
+            code_ep_a[c] += 1
+        for c in {cat_of(x) for x in cb}:
+            cat_ep_b[c] += 1
+        for c in {cat_of(x) for x in ca}:
+            cat_ep_a[c] += 1
+        st_b[r.get("status")] += 1
+        st_a[r.get("final_status")] += 1
+        b, a = fnum(r.get("overall_score")), fnum(r.get("final_overall_score"))
+        if b is not None:
+            sc_b.append(b)
+        if a is not None:
+            sc_a.append(a)
+        if r.get("repaired_file") or set(cb) != set(ca) or r.get("status") != r.get("final_status"):
+            changed.append({"ep": ep, "status_before": r.get("status"), "status_after": r.get("final_status"),
+                            "score_before": b, "score_after": a, "resolved": [c for c in cb if c not in ca],
+                            "remaining": [c for c in ca if c in cb], "new": [c for c in ca if c not in cb],
+                            "train_frames": int(fnum(r.get("train_frames"), 0) or 0), "policy": r.get("train_policy")})
+    codes = sorted(set(code_ep_b) | set(code_ep_a))
+    code_rows = [{"code": c, "category": cat_of(c), "description": desc.get(c) or "", "blocks": blocks.get(c, False),
+                  "episodes_before": code_ep_b[c], "episodes_after": code_ep_a[c],
+                  "frames_before": code_fr_b[c], "frames_after": code_fr_a[c]} for c in codes]
+    code_rows.sort(key=lambda x: (-(x["episodes_before"] - x["episodes_after"]), -(x["frames_before"] - x["frames_after"]), x["code"]))
+    tf = (s.get("governance") or {}).get("train_frames") or {}
+    mean = lambda xs: round(sum(xs) / len(xs), 2) if xs else None  # noqa: E731
+    return {
+        "episodes": len(eps), "rows": (s.get("scope") or {}).get("rows"),
+        "status_before": dict(st_b), "status_after": dict(st_a),
+        "flag_rows_before": rows_b, "flag_rows_after": rows_a,
+        "block_rows_before": blk_b, "block_rows_after": blk_a,
+        "cat_rows_before": dict(cat_b), "cat_rows_after": dict(cat_a),
+        "cat_eps_before": dict(cat_ep_b), "cat_eps_after": dict(cat_ep_a),
+        "score_mean_before": mean(sc_b), "score_mean_after": mean(sc_a),
+        "train_base": tf.get("原本可用"), "train_detect_only": detect_only_total, "train_total": tf.get("total"),
+        "train_parts": {k: v for k, v in tf.items() if k != "total"},
+        "codes": code_rows, "changed": changed,
+    }
 
 
 def api_result(stage: str) -> dict:

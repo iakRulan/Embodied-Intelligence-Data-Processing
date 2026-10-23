@@ -811,6 +811,7 @@ function renderGovernResult(res, box, panel) {
         <p class="eyebrow">同一批 ${res.scope.episodes} 条轨迹 · ${fmt(res.scope.rows)} 行 · 本次运行</p>
         <h2><b>+${fmt(delta)}</b><small>帧</small><br>被安全救回。</h2>
         <p class="gh-line">不修，只能留下 <b>${fmt(base)}</b> 帧；安全修复后留下 <b>${fmt(total)}</b> 帧。多找回的 <b>${fmt(delta)}</b> 帧（占最终可训练帧的 ${total ? ((delta / total) * 100).toFixed(1) : '—'}%）每一帧都重新过了同一套检测，带阻断问题的不进训练。</p>
+        ${res.compare ? `<div class="gh-ba"><span>复检 · 需复核轨迹 ${fmt(res.compare.status_before['需复核'] || 0)} → <b>${fmt(res.compare.status_after['需复核'] || 0)}</b></span><span>带问题码的帧 ${fmt(res.compare.flag_rows_before)} → <b>${fmt(res.compare.flag_rows_after)}</b></span><span>平均质量分 ${fmt(res.compare.score_mean_before, 2)} → <b>${fmt(res.compare.score_mean_after, 2)}</b></span></div>` : ''}
       </div>
       <div class="gh-chart">
         ${tiers.map(([n, s, v, c], i) => `<div class="gh-row ${i === tiers.length - 1 ? 'best' : ''}">
@@ -848,7 +849,7 @@ function renderGovernResult(res, box, panel) {
           ${filesCard(res, res.stage, ['governed/'], '生成物：治理叠加层', ['report'])}
         </div>
       </div>
-      ${res.stage === 'govern' ? '<div class="cta-row"><button class="cta" data-goto="3">下一步：同一现象，为什么一个修、一个不修</button><span class="hint">默认打开 ep29 的修复前后分屏，旁边固定 ep74 的拒修对照</span></div>' : ''}
+      ${res.stage === 'govern' ? '<div class="cta-row"><button class="cta" data-goto="3">下一步：修复前后对比</button><span class="hint">先看全量对比，再逐条看 ep29 修复前后的画面、ep74 为什么不修</span></div>' : ''}
     </div>`;
   requestAnimationFrame(() => {
     $$('.gh-row .t i', box).forEach((i) => (i.style.width = i.dataset.w + '%'));
@@ -880,7 +881,7 @@ function drawPanorama(canvas, res, mode, stage) {
   const epBits = {};
   for (const e of eps) {
     let b = 0;
-    for (const c of e.codes) {
+    for (const c of (mode === 'final' ? e.final_codes : e.codes) || []) {
       const m = codeScope[c];
       if (m && m.scope === '轨迹级' && catOf(c) !== '数据价值') b |= CAT_BIT[catOf(c)];
     }
@@ -907,7 +908,7 @@ function drawPanorama(canvas, res, mode, stage) {
     eps.forEach((e, i) => {
       const y = i * (rowH + gap) + 2;
       if (eps.length <= 40 || e.id % 10 === 0) { ctx.fillStyle = col.ink3; ctx.fillText(epName(e.id), 0, y + rowH / 2); }
-      const s = (mode === 'after' ? res.mask_after : res.mask_before)[e.id] || '';
+      const s = (mode === 'after' ? res.mask_after : mode === 'final' ? (res.mask_final || res.mask_before) : res.mask_before)[e.id] || '';
       if (!s.length) {
         ctx.fillStyle = col.bad;
         ctx.globalAlpha = 0.35;
@@ -922,6 +923,8 @@ function drawPanorama(canvas, res, mode, stage) {
         let fill, alpha = 1;
         if (mode === 'after') {
           fill = { k: col.keep, r: col.fix, v: col.scatter, x: col.blocked, d: col.warn }[ch] || col.blocked;
+        } else if (ch === 'r') {
+          fill = col.fix;
         } else {
           const b = parseInt(ch, 16) || 0;
           if (b) fill = catCol[[1, 2, 4, 8].findIndex((m) => b & m)];
@@ -957,18 +960,22 @@ function drawPanorama(canvas, res, mode, stage) {
       if (!h) return hideTip();
       const { e, row, inRow } = h;
       const ints = (canvas._res.intervals_by_ep?.[e.id] || []);
-      let html = `<b>${epName(e.id)}</b> · ${fmt(e.rows)} 行 · ${esc(canvas._mode === 'after' ? e.policy : e.status)} · ${fmt(canvas._mode === 'after' ? e.final_score : e.score, 1)} 分`;
+      const md = canvas._mode;
+      const fin = md === 'after' || md === 'final';
+      let html = `<b>${epName(e.id)}</b> · ${fmt(e.rows)} 行 · ${esc(md === 'after' ? e.policy : md === 'final' ? e.final_status : e.status)} · ${fmt(fin ? e.final_score : e.score, 1)} 分`;
+      const eCodes = (md === 'final' ? e.final_codes : e.codes) || [];
       if (inRow && e.rows) {
         html += `<br>第 ${row} 行`;
-        const s = (canvas._mode === 'after' ? canvas._res.mask_after : canvas._res.mask_before)[e.id] || '';
-        if (canvas._mode === 'after') html += ' · ' + ({ k: '进入训练', r: '修复后进入训练', v: '有效但未成段', x: '阻断 / 隔离', d: '重复剔除' }[s[row]] || '');
-        const codes = e.codes.filter((c) => {
+        const s = (md === 'after' ? canvas._res.mask_after : md === 'final' ? canvas._res.mask_final : canvas._res.mask_before)[e.id] || '';
+        if (md === 'after') html += ' · ' + ({ k: '进入训练', r: '修复后进入训练', v: '有效但未成段', x: '阻断 / 隔离', d: '重复剔除' }[s[row]] || '');
+        if (md === 'final' && s[row] === 'r') html += ' · 本行被修复改写';
+        const codes = eCodes.filter((c) => {
           const b = parseInt(s[row], 16);
-          return canvas._mode !== 'after' && !Number.isNaN(b) && (b & CAT_BIT[catOf(c)]);
+          return md !== 'after' && !Number.isNaN(b) && (b & CAT_BIT[catOf(c)]);
         });
         if (codes.length) html += '<br>' + codes.map((c) => `<div class="tt-row"><i style="background:var(${CAT_VAR[catOf(c)]})"></i>${esc(c)}</div>`).join('');
       }
-      const lvl = e.codes.filter((c) => canvas._res.code_dict?.[c]?.scope === '轨迹级');
+      const lvl = eCodes.filter((c) => canvas._res.code_dict?.[c]?.scope === '轨迹级');
       if (lvl.length && canvas._mode !== 'after') html += `<div class="muted">轨迹级：${lvl.map(esc).join('、')}</div>`;
       showTip(html, ev.clientX, ev.clientY);
     });
@@ -1526,6 +1533,108 @@ function pairBannerHtml(res, activeEp) {
   </div>`;
 }
 
+// ------------------------------------------------------------ before / after: whole dataset, same detector re-run on the repaired copies
+function baPair(label, b, a, opt = {}) {
+  const d = b != null && a != null ? a - b : null;
+  const good = d == null || d === 0 ? '' : (opt.lower ? d < 0 : d > 0) ? 'good' : 'worse';
+  const f = (v) => (v == null ? '—' : opt.dec ? fmt(v, opt.dec) : fmt(v));
+  const pctTxt = d && b ? ` · ${d > 0 ? '+' : ''}${((d / b) * 100).toFixed(1)}%` : '';
+  return `<div class="bap ${good}">
+    <span class="bap-l">${label}</span>
+    <div class="bap-v"><s>${f(b)}</s><em>→</em><b>${f(a)}</b></div>
+    <span class="bap-d">${d == null ? '' : d === 0 ? '不变' : `${d > 0 ? '+' : ''}${opt.dec ? fmt(d, opt.dec) : fmt(d)}${pctTxt}`}${opt.sub ? ` · ${opt.sub}` : ''}</span>
+  </div>`;
+}
+
+function overallHtml(res, opts = {}) {
+  const C = res.compare;
+  if (!C) return '';
+  const sb = C.status_before || {}, sa = C.status_after || {};
+  const maxCat = Math.max(1, ...CATS.map((c) => Math.max(C.cat_rows_before[c] || 0, C.cat_rows_after[c] || 0)));
+  const catRows = CATS.map((c) => {
+    const b = C.cat_rows_before[c] || 0, a = C.cat_rows_after[c] || 0;
+    const eb = C.cat_eps_before[c] || 0, ea = C.cat_eps_after[c] || 0;
+    return `<div class="bac">
+      <span class="bac-l"><i style="background:var(${CAT_VAR[c]})"></i>${c}</span>
+      <div class="bac-t"><i class="b" style="width:${(b / maxCat) * 100}%"></i><i class="a" style="width:${(a / maxCat) * 100}%;background:var(${CAT_VAR[c]})"></i></div>
+      <span class="bac-v">${b || a ? `${fmt(b)}<em>→</em><b>${fmt(a)}</b> 帧` : '<small>只有轨迹级问题</small>'}</span>
+      <span class="bac-e">${eb}<em>→</em>${ea} 条</span>
+    </div>`;
+  }).join('');
+  const moved = C.codes.filter((x) => x.episodes_before !== x.episodes_after || x.frames_before !== x.frames_after);
+  const same = C.codes.length - moved.length;
+  const codeRow = (x) => `<tr class="${x.episodes_after === 0 ? 'gone' : ''}">
+      <td><span class="code"><i style="background:var(${CAT_VAR[x.category]})"></i>${esc(x.code)}</span></td>
+      <td>${esc(CODE_CN[x.code] || x.description)}</td>
+      <td class="num">${x.episodes_before}<em>→</em><b>${x.episodes_after}</b></td>
+      <td class="num">${x.frames_before || x.frames_after ? `${fmt(x.frames_before)}<em>→</em><b>${fmt(x.frames_after)}</b>` : '<span class="muted">轨迹级</span>'}</td>
+    </tr>`;
+  const ch = (C.changed || []).map((x) => `<tr class="click" data-ep="${x.ep}">
+      <td><b>${epName(x.ep)}</b></td>
+      <td><span class="badge b-${STATUS_CLS[x.status_before] || 'bad'}"><i></i>${esc(x.status_before)}</span> → <span class="badge b-${STATUS_CLS[x.status_after] || 'bad'}"><i></i>${esc(x.status_after)}</span></td>
+      <td class="num">${fmt(x.score_before, 2)} → <b>${fmt(x.score_after, 2)}</b></td>
+      <td>${x.resolved.map((c) => `<span class="code gone"><i style="background:var(${CAT_VAR[catOf(c)]})"></i>${esc(c)}</span>`).join(' ')}${x.new.map((c) => `<span class="code new"><i style="background:var(${CAT_VAR[catOf(c)]})"></i>${esc(c)}</span>`).join(' ')}${x.remaining.length ? `<span class="muted"> 仍有 ${x.remaining.length} 种</span>` : ''}</td>
+      <td class="num">${fmt(x.train_frames)}</td>
+      <td>${esc(x.policy || '')}</td>
+    </tr>`).join('');
+  return `<div class="ov">
+    <section class="panel ov-head">
+      <div class="ov-copy">
+        <p class="eyebrow">同一批 ${fmt(C.episodes)} 条轨迹 · ${fmt(C.rows)} 行 · 修复后对副本用同一套检测重新跑一遍</p>
+        <h2>修复前 <em>vs</em> 修复后</h2>
+        <p class="ov-lead">左边是原始数据的检测结果，右边是修复副本的复检结果。数字全部来自算子这次写出的报告，不依赖任何人工标注。</p>
+      </div>
+      <div class="bap-grid">
+        ${baPair('需复核轨迹', sb['需复核'] || 0, sa['需复核'] || 0, { lower: true })}
+        ${baPair('通过的轨迹', sb['通过'] || 0, sa['通过'] || 0)}
+        ${baPair('带问题码的帧', C.flag_rows_before, C.flag_rows_after, { lower: true })}
+        ${baPair('平均质量分', C.score_mean_before, C.score_mean_after, { dec: 2 })}
+        ${baPair('可训练帧', C.train_base, C.train_total, { sub: C.train_detect_only != null ? `只检测+切段 ${fmt(C.train_detect_only)}` : '含切段' })}
+      </div>
+    </section>
+    <section class="panel card">
+      <div class="card-h"><h3>逐帧全景：修复前 / 修复后（复检）</h3><span class="sub">每行一条轨迹，每格一帧；两边同一行是同一条轨迹</span></div>
+      <div class="legend" style="margin-bottom:10px">${CATS.map((c) => `<span><i style="background:var(${CAT_VAR[c]})"></i>${c}</span>`).join('')}<span><i style="background:var(--fix)"></i>被修复改写的行</span><span><i style="background:var(--cell)"></i>未命中</span><span class="muted">浅色 = 整条轨迹级问题</span></div>
+      <div class="ov-panos">
+        <div><div class="ov-pt"><span class="dot ov-b"></span>修复前 · 原始检测<b>${fmt(C.flag_rows_before)}</b><small>帧带问题码</small></div><div class="pano-wrap"><canvas data-pano="before"></canvas></div></div>
+        <div><div class="ov-pt"><span class="dot ov-f"></span>修复后 · 复检<b>${fmt(C.flag_rows_after)}</b><small>帧带问题码</small></div><div class="pano-wrap"><canvas data-pano="final"></canvas></div></div>
+      </div>
+    </section>
+    <div class="ov-two">
+      <section class="panel card">
+        <div class="card-h"><h3>四类问题：修复前 → 修复后</h3><span class="sub">上条灰 = 修复前，下条彩色 = 复检后</span></div>
+        <div class="bacs">${catRows}</div>
+        <p class="note" style="margin-top:12px">修复只动证据充分的那一部分：同步类（相机错位、任务标签）下降最明显；证据不足的问题保持原样、不进入训练。</p>
+      </section>
+      <section class="panel card">
+        <div class="card-h"><h3>问题码变化</h3><span class="sub">${moved.length} 种有变化${same ? ` · 其余 ${same} 种不变` : ''}</span></div>
+        <div class="tbl-wrap ov-codes"><table class="tbl"><thead><tr><th>问题码</th><th>说明</th><th>轨迹</th><th>帧</th></tr></thead><tbody>${moved.map(codeRow).join('') || '<tr><td colspan="4" class="muted">没有问题码发生变化</td></tr>'}</tbody></table></div>
+        ${same ? `<details class="ov-more"><summary>展开其余 ${same} 种不变的问题码</summary><div class="tbl-wrap ov-codes"><table class="tbl"><tbody>${C.codes.filter((x) => !moved.includes(x)).map(codeRow).join('')}</tbody></table></div></details>` : ''}
+      </section>
+    </div>
+    <section class="panel card">
+      <div class="card-h"><h3>有变化的轨迹（${(C.changed || []).length} 条）</h3><span class="sub">删除线 = 复检已消除；带框 = 修复后如实标出的新问题（如相机移回后开头缺图）；${opts.compareHint || '点任一行看修复前后画面'}</span></div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>轨迹</th><th>状态</th><th>质量分</th><th>问题码变化</th><th>训练帧</th><th>去向</th></tr></thead><tbody>${ch || '<tr><td colspan="6" class="muted">这次没有轨迹发生变化</td></tr>'}</tbody></table></div>
+    </section>
+  </div>`;
+}
+
+function bindOverall(host, res, onEp) {
+  $$('canvas[data-pano]', host).forEach((c) => drawPanorama(c, res, c.dataset.pano, res.stage));
+  $$('tr.click[data-ep]', host).forEach((tr) => tr.addEventListener('click', () => onEp(+tr.dataset.ep)));
+}
+
+function showOverallInStep3() {
+  const res = S.res.govern;
+  S.cmpEp = 'overall';
+  if (S.cmpTimer) { clearInterval(S.cmpTimer); S.cmpTimer = null; }
+  $$('#cmpList .case').forEach((b) => b.classList.toggle('on', b.dataset.ep === 'overall'));
+  const main = $('#cmpMain');
+  main.innerHTML = overallHtml(res) + `<div class="cta-row"><button class="cta" data-ep-go="${shiftPairs(res).fixed?.episode_index ?? ''}">逐条看：同一现象，为什么一个修、一个不修</button><span class="hint">修复前后同一行画面并排对比</span></div>`;
+  bindOverall(main, res, (ep) => { selectCase(ep); window.scrollTo({ top: 0, behavior: 'smooth' }); });
+  $$('[data-ep-go]', main).forEach((b) => b.addEventListener('click', () => { if (b.dataset.epGo !== '') { selectCase(+b.dataset.epGo); window.scrollTo({ top: 0, behavior: 'smooth' }); } }));
+}
+
 async function renderCompare() {
   const list = $('#cmpList'), main = $('#cmpMain');
   const res = await ensureGovern();
@@ -1569,16 +1678,17 @@ async function renderCompare() {
   };
   const otherFixed = fixed.filter((m) => !pairIds.has(+m.episode_index));
   const otherRefused = refused.filter((m) => !pairIds.has(+m.episode_index));
-  list.innerHTML = `<div class="mini-pair">
+  list.innerHTML = `<button class="case case-overall" data-ep="overall"><b>全量对比</b><span class="sc">默认</span><span class="d">修复前 vs 修复后：需复核轨迹、带问题的帧、问题码、可训练帧</span></button>
+    <div class="mini-pair">
       <h4>同样的现象，为什么一个修、一个不修</h4>
       <div class="mini-cases">${mini(pair.fixed, 'fixed')}${mini(pair.refused, 'refused')}</div>
     </div>
     <button class="case case-notes" data-ep="notes"><b>修复说明</b><span class="sc">点开看</span><span class="d">每类问题怎么修、必须满足什么条件、哪些坚决不修</span></button>
     <h4>其他已修复 · ${otherFixed.length} 条</h4>${otherFixed.map((m) => item(m, 'fix')).join('')}
     <h4>其他拒修示例</h4>${otherRefused.map((m) => item(m, 'ref')).join('')}`;
-  $$('.case', list).forEach((b) => b.addEventListener('click', () => (b.dataset.ep === 'notes' ? showNotesInStep4() : selectCase(+b.dataset.ep))));
-  const start = pair.fixed ? +pair.fixed.episode_index : null;
-  if (start != null) selectCase(start);
+  $$('.case', list).forEach((b) => b.addEventListener('click', () => (b.dataset.ep === 'notes' ? showNotesInStep4() : b.dataset.ep === 'overall' ? showOverallInStep3() : selectCase(+b.dataset.ep))));
+  if (res.compare) showOverallInStep3();
+  else if (pair.fixed) selectCase(+pair.fixed.episode_index);
   else showNotesInStep4();
 }
 
