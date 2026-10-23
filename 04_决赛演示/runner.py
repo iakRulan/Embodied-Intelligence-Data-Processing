@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """RefSync-QA 决赛演示 · 运行器
 
-直接调用 v3.2 算子的 pipeline.run()，算法代码零改动；只在主进程里"旁听"：
+直接调用 RefSync-QA 算子（当前 v3.2.1）的 pipeline.run()，算法代码零改动；只在主进程里"旁听"：
   - 每条轨迹在进程池里完成时，输出一条 episode 事件（状态、问题码、耗时、解码图像数）
   - 去重 / 治理与报告写出 / 汇总 三个阶段的起止时刻
 所有事件以 JSON 行写到 stdout，由 server.py 转发给页面并存成 demo_events.jsonl（回放用）。

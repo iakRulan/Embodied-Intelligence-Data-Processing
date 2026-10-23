@@ -1354,6 +1354,7 @@ const CODE_CN = {
   T_METADATA_LENGTH_MISMATCH: '元数据记录长度与实际不符',
   C_IMAGE_SCREEN: '画面黑屏、白屏或低对比度',
   C_IMAGE_BLUR: '画面模糊',
+  C_IMAGE_MOSAIC: '画面成块马赛克（有效分辨率过低）',
   C_IMAGE_DUPLICATE: '相邻帧画面重复',
   C_IMAGE_SHAPE: '图像分辨率或通道数不符',
   C_FILE_UNREADABLE: '文件无法读取',
