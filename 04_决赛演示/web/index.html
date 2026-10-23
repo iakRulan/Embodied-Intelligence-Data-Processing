@@ -13,10 +13,10 @@
     <span class="brand-sub">具身智能多模态数据质量检测与安全治理</span>
   </div>
   <nav class="steps" id="steps" aria-label="演示步骤">
-    <button data-step="1"><b>1</b>导入测试</button>
-    <button data-step="2"><b>2</b>检测</button>
-    <button data-step="3"><b>3</b>修复</button>
-    <button data-step="4"><b>4</b>对比</button>
+    <button data-step="1"><b>1</b>检测</button>
+    <button data-step="2"><b>2</b>修复</button>
+    <button data-step="3"><b>3</b>对比</button>
+    <button data-step="4"><b>4</b>导入测试</button>
   </nav>
   <div class="top-right">
     <div class="seg" id="modeSeg" role="radiogroup" aria-label="运行方式">
@@ -28,10 +28,25 @@
 </header>
 
 <main id="app">
-  <!-- 1 导入测试：选择数据现场验证算法 -->
+  <!-- 1 检测 / 2 修复（共用运行面板） -->
   <section class="view" data-view="1">
-    <div class="run-head"><div class="run-title"><h2>一、导入测试</h2>
-      <p>由您指定数据来验证算法：单个 Parquet 逐条测试，或选一个文件夹批量测试。原始数据只读，结果单独保存并可回看；跑完可直接进入检测、修复、对比看完整链路。</p></div></div>
+    <div class="run-shell" data-stage="detect"></div>
+  </section>
+  <section class="view" data-view="2">
+    <div class="run-shell" data-stage="govern"></div>
+  </section>
+
+  <!-- 3 对比 -->
+  <section class="view" data-view="3">
+    <div class="cmp-grid">
+      <aside class="cmp-list panel" id="cmpList"></aside>
+      <div class="cmp-main" id="cmpMain"></div>
+    </div>
+  </section>
+  <!-- 4 导入测试：用自己的数据走一遍检测、修复、对比 -->
+  <section class="view" data-view="4">
+    <div class="run-head"><div class="run-title"><h2>四、导入测试</h2>
+      <p>用您自己的数据走一遍同样的流程：检测 → 修复 → 修复前后对比。单个 Parquet 看单条细节，文件夹批量测试；原始数据只读，结果单独保存并可回看。</p></div></div>
     <div class="imp-grid">
       <aside class="imp-side">
         <div class="panel card">
@@ -60,21 +75,6 @@
         <div class="panel empty" id="impEmpty"><h3>先在左侧选择要测试的数据</h3><p>单个文件适合现场挑一条轨迹看细节；文件夹会把其中所有 Parquet 一次性批量检测。</p></div>
         <div class="run-shell" data-stage="import" hidden></div>
       </div>
-    </div>
-  </section>
-  <!-- 2 检测 / 3 修复（共用运行面板） -->
-  <section class="view" data-view="2">
-    <div class="run-shell" data-stage="detect"></div>
-  </section>
-  <section class="view" data-view="3">
-    <div class="run-shell" data-stage="govern"></div>
-  </section>
-
-  <!-- 4 对比 -->
-  <section class="view" data-view="4">
-    <div class="cmp-grid">
-      <aside class="cmp-list panel" id="cmpList"></aside>
-      <div class="cmp-main" id="cmpMain"></div>
     </div>
   </section>
 </main>

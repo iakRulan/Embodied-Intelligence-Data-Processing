@@ -28,8 +28,10 @@ const POLICY_VAR = {
 const DIM_CN = { structure: '结构', temporal: '时序', sync: '同步', content: '内容', value: '价值' };
 const DIM_W = { structure: '25%', temporal: '20%', sync: '20%', content: '20%', value: '15%' };
 
+// 演示四步：1 检测 → 2 修复 → 3 对比 → 4 导入测试
+const STEP = { detect: 1, govern: 2, compare: 3, import: 4 };
 const S = {
-  step: 1,
+  step: STEP.detect,
   mode: 'live',
   info: null,
   res: {},
@@ -93,14 +95,14 @@ function setStep(n) {
   $$('.view').forEach((v) => v.classList.toggle('on', +v.dataset.view === n));
   $$('#steps button').forEach((b) => b.classList.toggle('on', +b.dataset.step === n));
   closeOverlays();
-  if (n === 4) renderCompare();
+  if (n === STEP.compare) renderCompare();
   window.scrollTo(0, 0);
 }
 $$('#steps button').forEach((b) => b.addEventListener('click', () => setStep(+b.dataset.step)));
 function markDone() {
   $$('#steps button').forEach((b) => {
     const st = +b.dataset.step;
-    b.classList.toggle('done', (st === 1 && !!S.impDone) || (st === 2 && !!S.res.detect) || (st === 3 && !!S.res.govern));
+    b.classList.toggle('done', (st === STEP.import && !!S.impDone) || (st === STEP.detect && !!S.res.detect) || (st === STEP.govern && !!S.res.govern));
   });
 }
 
@@ -120,9 +122,9 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 't' || e.key === 'T') $('#themeBtn').click();
   else if (e.key === 'f' || e.key === 'F') { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen?.(); }
   else if (e.key === ' ' || e.key === 'Enter') {
-    const p = S.step === 2 ? S.panels.detect : S.step === 3 ? S.panels.govern : null;
+    const p = S.step === STEP.detect ? S.panels.detect : S.step === STEP.govern ? S.panels.govern : null;
     if (p && p.state !== 'running') { e.preventDefault(); p.start(); }
-    if (S.step === 1 && !$('#impRun').disabled) { e.preventDefault(); impRun(); }
+    if (S.step === STEP.import && !$('#impRun').disabled) { e.preventDefault(); impRun(); }
   }
 });
 
@@ -137,13 +139,13 @@ function hwLabel(t) {
 // ------------------------------------------------------------ run panel
 const STAGE_CFG = {
   detect: {
-    name: '二、检测',
+    name: '一、检测',
     desc: '逐轨迹、逐帧定位时序、同步、内容结构、数据价值四类问题，按证据强弱分级，给出问题区间。只读运行，不生成修复副本。',
     btn: '开始检测', rerun: '重新检测',
     phases: [['episodes', '逐轨迹特征提取与三层证据检测'], ['dedup', '跨轨迹重复关系'], ['outputs', '掩膜与报告写出'], ['summary', '汇总报告']],
   },
   govern: {
-    name: '三、修复',
+    name: '二、修复',
     desc: '证据充分才修：改写只写副本、原始数据只读，副本写后逐单元格回读核验，修复后重新检测；证据不足则拒修隔离。最后切出连续可训练片段。',
     btn: '开始修复', rerun: '重新修复',
     phases: [['episodes', '检测 → 修复 → 回读核验 → 复检'], ['dedup', '跨轨迹去重'], ['outputs', '修复决策、切段与审计写出'], ['summary', '汇总报告']],
@@ -600,7 +602,7 @@ function renderDetectResult(res, box, panel) {
       </div>
       <div class="col">${catCard(res)}${scoreCard(res)}${filesCard(res, res.stage, ['report/'], '生成物：检测报告')}</div>
     </div>
-    ${res.stage === 'detect' ? '<div class="cta-row"><button class="cta" data-goto="3">下一步：安全治理</button><span class="hint">检测只读，原始数据未被改动；治理会在此基础上写修复副本</span></div>' : ''}`;
+    ${res.stage === 'detect' ? '<div class="cta-row"><button class="cta" data-goto="2">下一步：修复</button><span class="hint">检测只读，原始数据未被改动；治理会在此基础上写修复副本</span></div>' : ''}`;
   drawPanorama($('canvas[data-pano]', box), res, 'before', res.stage);
   $$('[data-goto]', box).forEach((b) => b.addEventListener('click', () => setStep(+b.dataset.goto)));
   bindCommon(box, res, res.stage);
@@ -666,12 +668,12 @@ function renderGovernResult(res, box, panel) {
           <div class="card panel"><div class="card-h"><h3>治理决策流向</h3><span class="sub">原始检测状态 → 每条轨迹的去向</span></div><div class="sankey" id="sankey-${panel.stage}"></div></div>
           <div class="card panel"><div class="card-h"><h3>证据不足，主动拒修</h3><span class="sub">${fmt(g.repairs_rejected)} 项 · 按原因</span></div>
             <div class="reasons">${rs.slice(0, 7).map(([k, v]) => `<div class="reason"><div>${esc(k)}<div class="t"><i style="width:${(v / rmax) * 100}%"></i></div></div><b>${v}</b></div>`).join('')}</div>
-            <div class="files-foot"><span>拒修的轨迹保持原样，交由隔离回采或人工复核</span>${res.stage === 'govern' ? '<button class="ghost sm" data-goto="4">看修复说明</button>' : ''}</div>
+            <div class="files-foot"><span>拒修的轨迹保持原样，交由隔离回采或人工复核</span>${res.stage === 'govern' ? '<button class="ghost sm" data-goto="3">看修复说明</button>' : ''}</div>
           </div>
           ${filesCard(res, res.stage, ['governed/'], '生成物：治理叠加层', ['report'])}
         </div>
       </div>
-      ${res.stage === 'govern' ? '<div class="cta-row"><button class="cta" data-goto="4">下一步：同一现象，为什么一个修、一个不修</button><span class="hint">默认打开 ep29 的修复前后分屏，旁边固定 ep74 的拒修对照</span></div>' : ''}
+      ${res.stage === 'govern' ? '<div class="cta-row"><button class="cta" data-goto="3">下一步：同一现象，为什么一个修、一个不修</button><span class="hint">默认打开 ep29 的修复前后分屏，旁边固定 ep74 的拒修对照</span></div>' : ''}
     </div>`;
   requestAnimationFrame(() => {
     $$('.gh-row .t i', box).forEach((i) => (i.style.width = i.dataset.w + '%'));
@@ -1310,7 +1312,7 @@ async function ensureGovern() {
 }
 
 function needGovernHtml(what) {
-  return `<div class="panel empty"><h3>${what}需要先完成安全治理</h3><p>回到第 3 步运行一次治理，或切换到回放模式。</p><button class="cta" data-goto="3">去安全治理</button></div>`;
+  return `<div class="panel empty"><h3>${what}需要先完成修复</h3><p>回到第 2 步运行一次修复，或切换到回放模式。</p><button class="cta" data-goto="2">去修复</button></div>`;
 }
 
 function shiftPairs(res) {
@@ -1355,7 +1357,7 @@ async function renderCompare() {
   if (!res) {
     list.hidden = true;
     main.innerHTML = needGovernHtml('修复前后对比');
-    $$('[data-goto]', main).forEach((b) => b.addEventListener('click', () => setStep(3)));
+    $$('[data-goto]', main).forEach((b) => b.addEventListener('click', () => setStep(STEP.govern)));
     return;
   }
   list.hidden = false;
@@ -2427,5 +2429,5 @@ async function refreshInfo() {
   }
   for (const st of ['detect', 'govern']) S.panels[st] = new RunPanel(st, $(`.run-shell[data-stage=${st}]`));
   initImport();
-  setStep(1);
+  setStep(STEP.detect);
 })();

@@ -2,33 +2,10 @@
   "operator_dir": "../03_复赛算子/Raw_data",
   "input_dir": "../具身智能多模态数据质量检测算法赛题-初赛数据/初赛数据/测试集",
   "runs_dir": "runs",
-  "platform_summary": "",
   "workers": null,
   "port": 8765,
   "team": "MoMo_Lab",
   "dataset_label": "赛题公开测试集",
-  "official": {
-    "title": "复赛评审成绩",
-    "source": "大衍数据平台统一测试 · 复赛成绩单",
-    "number": "05",
-    "team": "MoMo_Lab",
-    "total": 93.47,
-    "accuracy": 0.9101,
-    "correct": 81,
-    "count": 89,
-    "items": [
-      ["技术方案与流程思路", 14.2, 15],
-      ["数据缺陷检测定位与效果展示", 41.77, 45],
-      ["数据治理修复方式及质量提升", 18.5, 20],
-      ["评估指标全面性指导性", 9.5, 10],
-      ["算法运行效率与批处理能力", 9.5, 10]
-    ],
-    "comment": "检测准确率最高，修复复检与并行工程完整，整体表现最均衡。"
-  },
-  "hero": {
-    "episode": 6,
-    "row": 80
-  },
   "compare_pair": {
     "fixed": 29,
     "refused": 74

@@ -5,7 +5,7 @@
     python server.py --port 9000 --no-browser
 
 接口
-  GET  /api/info                         数据集、平台复赛成绩、已有运行记录
+  GET  /api/info                         数据集与已有运行记录
   POST /api/run?stage=detect|govern&mode=live|replay
   GET  /api/job?stage=..&from=N          运行事件（长轮询）
   GET  /api/result?stage=..              该阶段全部结果（来自算子真实输出文件）
@@ -61,8 +61,6 @@ def cfg_path(key: str) -> Path:
 OPERATOR = Path(os.environ["RSQA_DEMO_OPERATOR"]).resolve() if os.environ.get("RSQA_DEMO_OPERATOR") else cfg_path("operator_dir")
 INPUT = Path(os.environ["RSQA_DEMO_INPUT"]).resolve() if os.environ.get("RSQA_DEMO_INPUT") else cfg_path("input_dir")
 RUNS = Path(os.environ["RSQA_DEMO_RUNS"]).resolve() if os.environ.get("RSQA_DEMO_RUNS") else cfg_path("runs_dir")
-PLATFORM_SUMMARY = (Path(os.environ["RSQA_DEMO_PLATFORM"]) if os.environ.get("RSQA_DEMO_PLATFORM") else
-                    cfg_path("platform_summary") if CFG.get("platform_summary") else None)
 STAGES = ("detect", "govern")
 CAMS = ("image", "left_wrist_image", "right_wrist_image")
 CAT_OF_PREFIX = {"T": "时序", "S": "同步", "C": "内容结构", "J": "内容结构", "V": "数据价值"}
@@ -377,21 +375,6 @@ def dataset_info() -> dict:
     }
 
 
-def platform_info() -> dict | None:
-    if not PLATFORM_SUMMARY or not PLATFORM_SUMMARY.is_file():
-        return None
-    try:
-        s = json.loads(PLATFORM_SUMMARY.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return {"headline": s.get("headline"), "timing": s.get("timing"), "scope": s.get("scope"),
-            "detection": {k: s.get("detection", {}).get(k) for k in ("flagged_episodes", "flagged_frames", "issue_intervals")},
-            "governance": {k: s.get("governance", {}).get(k) for k in ("train_frames", "values_changed", "repairs_rejected",
-                                                                         "parquet_repaired_copies", "meta_patch_only")},
-            "errors": len(s.get("processing_errors", [])),
-            "thresholds_sha256": s.get("calibration_provenance", {}).get("thresholds_sha256")}
-
-
 def run_brief(stage: str) -> dict | None:
     d = stage_dir(stage)
     if not has_run(stage):
@@ -408,13 +391,10 @@ def run_brief(stage: str) -> dict | None:
 def api_info() -> dict:
     return clean({
         "dataset": dataset_info(),
-        "official": CFG.get("official"),
-        "platform": platform_info(),
         "runs": {s: run_brief(s) for s in STAGES},
         "host": {"platform": platform.platform(), "cpu": os.cpu_count(), "python": sys.version.split()[0]},
         "operator_dir": str(OPERATOR),
         "team": CFG.get("team"),
-        "hero": CFG.get("hero", {"episode": 6, "row": 80}),
         "compare_pair": CFG.get("compare_pair", {}),
     })
 
@@ -571,8 +551,6 @@ def build_result(stage: str) -> dict:
         "detection": {k: v for k, v in s.get("detection", {}).items() if k != "by_code"},
         "cat_frames": dict(cat_frames), "codes": code_list, "scores": s.get("scores"),
         "governance": s.get("governance"), "dataset_value": s.get("dataset_value"),
-        "coverage_limits": s.get("coverage_limits"), "label_note": s.get("label_note"),
-        "calibration": s.get("calibration"),
         "thresholds_sha256": s.get("calibration_provenance", {}).get("thresholds_sha256"),
         "processing_errors": s.get("processing_errors"),
         "episodes": ep_list, "mask_before": before, "mask_after": after,
