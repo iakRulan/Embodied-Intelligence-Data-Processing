@@ -88,6 +88,8 @@ try { setTheme(localStorage.getItem('rsqa-theme') || 'dark'); } catch (e) { setT
 
 function setStep(n) {
   S.step = n;
+  if (S.cmpTimer) { clearInterval(S.cmpTimer); S.cmpTimer = null; }
+  if (S.impTimer) { clearInterval(S.impTimer); S.impTimer = null; }
   $$('.view').forEach((v) => v.classList.toggle('on', +v.dataset.view === n));
   $$('#steps button').forEach((b) => b.classList.toggle('on', +b.dataset.step === n));
   closeOverlays();
@@ -225,7 +227,43 @@ class RunPanel {
     $('.run-body', this.el).hidden = false;
     $('.banner', this.el)?.remove();
     this.live = { st: { 需复核: 0, 通过: 0, 价值提示: 0 }, cats: { 时序: 0, 同步: 0, 内容结构: 0, 数据价值: 0 }, fixed: 0, cells: 0, rejected: 0, flagged: 0, codes: new Set(), secs: 0 };
+    this.setLiveCaption(null, true);
     this.renderLive();
+  }
+
+  setLiveCaption(ev, reset = false) {
+    const text = $('.lc-text', this.el);
+    const meta = $('.lc-meta', this.el);
+    if (!text) return;
+    if (reset || !ev) {
+      text.textContent = '运行开始，逐条处理中…';
+      meta.textContent = this.kind === 'govern'
+        ? '每条轨迹修了什么、为什么拒修，会在这里实时出现'
+        : '每条轨迹查出了什么，会在这里实时出现';
+      return;
+    }
+    const c = captionFor(ev, this.kind);
+    text.textContent = c.text;
+    meta.textContent = c.meta;
+    const box = $('.live-caption', this.el);
+    box.classList.remove('pulse');
+    void box.offsetWidth;
+    box.classList.add('pulse');
+  }
+
+  setFinalCaption() {
+    const L = this.live;
+    const text = $('.lc-text', this.el);
+    const meta = $('.lc-meta', this.el);
+    if (!text) return;
+    if (this.kind === 'govern') {
+      text.textContent = `${this.n || L.k} 条跑完：${L.fixed} 条生成修复副本或元数据补丁，${fmt(L.cells)} 格改写，${L.rejected} 项拒修`;
+      meta.textContent = '下面只回答一个问题：修完比不修多留下多少帧';
+    } else {
+      text.textContent = `${this.n || L.k} 条跑完：${L.st['需复核'] || 0} 条需复核，${fmt(L.flagged)} 行被帧级标记`;
+      meta.textContent = '红色是内容结构、蓝色是时序、橙色是同步；点任一行看画面';
+    }
+    $('.live-caption', this.el).classList.remove('pulse');
   }
 
   renderLive() {
@@ -353,6 +391,7 @@ class RunPanel {
         if (ev.t > 0.5) $('.c-ips', this.el).textContent = fmt(ev.images_total / ev.t) + ' 张/秒';
         const st = this.kind === 'govern' ? ev.final_status : ev.status;
         this.paintTile(ev.ep, st, ev.repaired || ev.meta_patch, ev.error, true, ev);
+        this.setLiveCaption(ev);
         const L = this.live;
         L.k = ev.k;
         L.st[st] = (L.st[st] || 0) + 1;
@@ -376,12 +415,14 @@ class RunPanel {
         if (/^\[detect\]/.test(ev.msg)) break;
         this.log(ev.msg.replace(/^\[done\] /, '完成：'));
         break;
-      case 'done':
+      case 'done': {
         this.timing = ev.timing;
         $('.clock-v', this.el).textContent = (ev.timing?.total_seconds_incl_all_csv_parquet_outputs ?? ev.t).toFixed(2);
         $('.clock-sub', this.el).textContent = `算子计时（读取 + 检测${this.kind === 'govern' ? ' + 修复 + 复检' : ''} + 全部文件写出）· ${hwLabel(ev.timing)}`;
         $$('.phases li', this.el).forEach((li) => { if (li.className === 'run') li.className = 'end'; });
+        this.setFinalCaption();
         break;
+      }
       case 'error':
         this.err = ev.msg;
         this.log(ev.msg, 'err');
@@ -445,9 +486,9 @@ class RunPanel {
     }
     const box = $('.result', this.el);
     box.innerHTML = '';
-    if (this.kind === 'detect') renderDetectResult(res, box, this);
+    if (this.opts.import) renderImportResult(res, box, this);
+    else if (this.kind === 'detect') renderDetectResult(res, box, this);
     else renderGovernResult(res, box, this);
-    if (this.opts.onResult) this.opts.onResult(res, box);
     box.hidden = false;
     $('.run-body', this.el).hidden = true;
     if (animate) box.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -535,7 +576,14 @@ function bindCommon(box, res, stage) {
 
 function renderDetectResult(res, box, panel) {
   const d = res.detection;
-  box.innerHTML = `<div class="kpis">
+  const cats = Object.entries(d.episodes_by_category || {}).sort((a, b) => b[1] - a[1]);
+  const topCat = cats[0] && cats[0][1] ? cats[0][0] : null;
+  box.innerHTML = `<div class="finding panel">
+      <span class="f-k">检测结论</span>
+      <h2>${fmt(d.flagged_episodes)} / ${fmt(res.scope.episodes)} 条需要复核${topCat ? `；问题最集中在${topCat}` : ''}。</h2>
+      <p>每行一条轨迹，每格一帧；颜色是问题类别。点任一行看画面与问题区间。</p>
+    </div>
+    <div class="kpis">
       ${speedKpi(res)}
       ${kpi('需复核轨迹', `${d.flagged_episodes}<small>/ ${res.scope.episodes}</small>`, `${pct(d.flagged_rate)} · 另有 ${d.value_hint_only_episodes} 条仅价值提示`)}
       ${kpi('帧级定位', `${fmt(d.flagged_frames)}<small>行</small>`, `占全部 ${fmt(res.scope.rows)} 行的 ${pct(d.flagged_frame_rate)}`)}
@@ -564,6 +612,7 @@ function renderGovernResult(res, box, panel) {
   const base = tf['原本可用'] || 0;
   const detectOnly = res.detect_only_train_frames;
   const total = tf.total;
+  const delta = total - base;
   const maxV = Math.max(total, detectOnly || 0, base) || 1;
   const tiers = [
     ['全盘丢弃', '只保留整条无阻断问题的轨迹', base, 'var(--ink-3)'],
@@ -580,39 +629,55 @@ function renderGovernResult(res, box, panel) {
   const rs = Object.entries(reasons).sort((a, b) => b[1] - a[1]);
   const rmax = rs[0]?.[1] || 1;
   const comp = [['原本可用', 'var(--ink-3)'], ['切段新增', 'var(--c-t)'], ['修复恢复', 'var(--fix)'], ['修复+切段', 'var(--c-c)']];
-  box.innerHTML = `<div class="kpis">
-      ${speedKpi(res)}
-      ${kpi('修复副本', `${g.parquet_repaired_copies}<small>+ ${g.meta_patch_only}</small>`, `${g.parquet_repaired_copies} 个 Parquet 副本 + ${g.meta_patch_only} 个元数据补丁；${g.flagged_resolved?.total ?? 0} 条复检后不再需复核`)}
-      ${kpi('改写单元格', `${fmt(g.values_changed)}<small>格</small>`, '每一格写后回读核验，并登记原值 → 新值')}
-      ${kpi('证据不足 · 拒修', `${fmt(g.repairs_rejected)}<small>项</small>`, `另有 ${g.repair_candidates} 项候选修复未执行，全部写明原因`)}
-      ${kpi('可训练帧', `${fmt(total)}<small>帧</small>`, base ? `比全盘丢弃多 ${fmt(total - base)} 帧（+${((total / base - 1) * 100).toFixed(1)}%）` : '')}
-    </div>
-    <div class="res-grid">
-      <div class="col">
-        <div class="card panel"><div class="card-h"><h3>可训练数据：三种处理方式对比</h3><span class="sub">同一批 ${res.scope.episodes} 条轨迹 · ${fmt(res.scope.rows)} 行</span></div>
-          <div class="tier">${tiers.map(([n, s, v, c]) => `<div class="tier-row"><div class="lab"><b>${n}</b>${s}</div><div class="t"><i data-w="${(v / maxV) * 100}" style="width:0;background:${c}"></i></div><div class="v">${fmt(v)}<small>${base && v !== base ? '+' + ((v / base - 1) * 100).toFixed(1) + '%' : '基线'}</small></div></div>`).join('')}</div>
-          <div class="sect"><div class="mini-h">最终 ${fmt(total)} 帧的来源</div>
-            <div class="stack">${comp.map(([k, c]) => `<i style="width:${((tf[k] || 0) / total) * 100}%;background:${c}"></i>`).join('')}</div>
-            <div class="stack-legend">${comp.map(([k, c]) => `<span><i style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${c};margin-right:5px"></i>${k} <b>${fmt(tf[k] || 0)}</b></span>`).join('')}</div>
+  box.innerHTML = `<section class="gov-hero panel">
+      <div class="gh-copy">
+        <p class="eyebrow">同一批 ${res.scope.episodes} 条轨迹 · ${fmt(res.scope.rows)} 行 · 本次运行</p>
+        <h2><b>+${fmt(delta)}</b><small>帧</small><br>被安全救回。</h2>
+        <p class="gh-line">不修，只能留下 <b>${fmt(base)}</b> 帧；安全修复后留下 <b>${fmt(total)}</b> 帧。多找回的 <b>${fmt(delta)}</b> 帧（占最终可训练帧的 ${total ? ((delta / total) * 100).toFixed(1) : '—'}%）每一帧都重新过了同一套检测，带阻断问题的不进训练。</p>
+      </div>
+      <div class="gh-chart">
+        ${tiers.map(([n, s, v, c], i) => `<div class="gh-row ${i === tiers.length - 1 ? 'best' : ''}">
+          <div class="lab"><b>${n}</b><span>${s}</span></div>
+          <div class="t"><i data-w="${(v / maxV) * 100}" style="width:0;background:${c}"></i></div>
+          <div class="v">${fmt(v)}<small>${i === 0 ? '基线' : '<span class="up">+' + fmt(v - base) + '</span>'}</small></div>
+        </div>`).join('')}
+        <div class="gh-legend"><span><i style="background:var(--ink-3)"></i>不修</span><span><i style="background:var(--ink-2)"></i>只检测 + 切段</span><span><i style="background:var(--ok)"></i>检测 + 安全修复 + 切段</span></div>
+      </div>
+      <div class="gh-foot"><span>可训练帧 = 连续 ≥ ${g.min_clip_frames || 30} 帧、且复检后不含阻断问题的片段</span><button class="ghost sm" data-scroll="govDetails">看检测与治理细节 ↓</button></div>
+    </section>
+    <div class="gov-details" id="govDetails">
+      <div class="gov-details-h"><span>细节：检测结论、逐条决策与生成物</span><span class="muted">主结论在上面；这里给需要核对的人</span></div>
+      <div class="kpis">
+        ${speedKpi(res)}
+        ${kpi('修复副本', `${g.parquet_repaired_copies}<small>+ ${g.meta_patch_only}</small>`, `${g.parquet_repaired_copies} 个 Parquet 副本 + ${g.meta_patch_only} 个元数据补丁；${g.flagged_resolved?.total ?? 0} 条复检后不再需复核`)}
+        ${kpi('改写单元格', `${fmt(g.values_changed)}<small>格</small>`, '每一格写后回读核验，并登记原值 → 新值')}
+        ${kpi('证据不足 · 拒修', `${fmt(g.repairs_rejected)}<small>项</small>`, `另有 ${g.repair_candidates} 项候选修复未执行，全部写明原因`)}
+        ${kpi('可训练帧', `${fmt(total)}<small>帧</small>`, base ? `比全盘丢弃多 ${fmt(total - base)} 帧（+${((total / base - 1) * 100).toFixed(1)}%）` : '')}
+      </div>
+      <div class="res-grid">
+        <div class="col">
+          <div class="card panel">
+            <div class="card-h"><h3>帧级全景：治理后哪些帧进入训练</h3><div class="pano-tools seg" data-pseg><button data-p="before">治理前</button><button data-p="after" class="on">治理后</button></div></div>
+            <div class="legend pano-legend" style="margin-bottom:10px"></div>
+            <div class="pano-wrap"><canvas data-pano></canvas></div>
           </div>
         </div>
-        <div class="card panel">
-          <div class="card-h"><h3>帧级全景：治理后哪些帧进入训练</h3><div class="pano-tools seg" data-pseg><button data-p="before">治理前</button><button data-p="after" class="on">治理后</button></div></div>
-          <div class="legend pano-legend" style="margin-bottom:10px"></div>
-          <div class="pano-wrap"><canvas data-pano></canvas></div>
+        <div class="col">
+          <div class="card panel"><div class="card-h"><h3>治理决策流向</h3><span class="sub">原始检测状态 → 每条轨迹的去向</span></div><div class="sankey" id="sankey-${panel.stage}"></div></div>
+          <div class="card panel"><div class="card-h"><h3>证据不足，主动拒修</h3><span class="sub">${fmt(g.repairs_rejected)} 项 · 按原因</span></div>
+            <div class="reasons">${rs.slice(0, 7).map(([k, v]) => `<div class="reason"><div>${esc(k)}<div class="t"><i style="width:${(v / rmax) * 100}%"></i></div></div><b>${v}</b></div>`).join('')}</div>
+            <div class="files-foot"><span>拒修的轨迹保持原样，交由隔离回采或人工复核</span>${res.stage === 'govern' ? '<button class="ghost sm" data-goto="4">看修复说明</button>' : ''}</div>
+          </div>
+          ${filesCard(res, res.stage, ['governed/'], '生成物：治理叠加层', ['report'])}
         </div>
       </div>
-      <div class="col">
-        <div class="card panel"><div class="card-h"><h3>治理决策流向</h3><span class="sub">原始检测状态 → 每条轨迹的去向</span></div><div class="sankey" id="sankey-${panel.stage}"></div></div>
-        <div class="card panel"><div class="card-h"><h3>证据不足，主动拒修</h3><span class="sub">${fmt(g.repairs_rejected)} 项 · 按原因</span></div>
-          <div class="reasons">${rs.slice(0, 7).map(([k, v]) => `<div class="reason"><div>${esc(k)}<div class="t"><i style="width:${(v / rmax) * 100}%"></i></div></div><b>${v}</b></div>`).join('')}</div>
-          <div class="files-foot"><span>拒修的轨迹保持原样，交由隔离回采或人工复核</span>${res.stage === 'govern' ? '<button class="ghost sm" data-goto="4">看修复说明</button>' : ''}</div>
-        </div>
-        ${filesCard(res, res.stage, ['governed/'], '生成物：治理叠加层', ['report'])}
-      </div>
-    </div>
-    ${res.stage === 'govern' ? '<div class="cta-row"><button class="cta" data-goto="4">下一步：修复说明与前后对比</button><span class="hint">每一条修复的问题、做法、依据和注意事项都集中在一页</span></div>' : ''}`;
-  requestAnimationFrame(() => $$('.tier-row .t i', box).forEach((i) => (i.style.width = i.dataset.w + '%')));
+      ${res.stage === 'govern' ? '<div class="cta-row"><button class="cta" data-goto="4">下一步：同一现象，为什么一个修、一个不修</button><span class="hint">默认打开 ep29 的修复前后分屏，旁边固定 ep74 的拒修对照</span></div>' : ''}
+    </div>`;
+  requestAnimationFrame(() => {
+    $$('.gh-row .t i', box).forEach((i) => (i.style.width = i.dataset.w + '%'));
+    $$('.tier-row .t i', box).forEach((i) => (i.style.width = i.dataset.w + '%'));
+  });
+  $$('[data-scroll]', box).forEach((b) => b.addEventListener('click', () => $('#' + b.dataset.scroll, box)?.scrollIntoView({ behavior: 'smooth', block: 'start' })));
   const canvas = $('canvas[data-pano]', box);
   const legend = $('.pano-legend', box);
   const setP = (p) => {
@@ -978,12 +1043,15 @@ async function openEpisode(stage, ep, row = 0) {
   const dict = res?.code_dict || {};
   const raw = d.raw;
   const n = raw.ok ? raw.n : 0;
+  const repaired = !!r.repaired_file;
+  const shownStatus = repaired ? r.final_status : r.status;
+  const shownScore = repaired ? r.final_overall_score : r.overall_score;
   const head = `<div class="ep-head"><h2 id="drawerTitle">${epName(ep)}</h2>
-    <span class="badge b-${STATUS_CLS[r.status] || 'bad'}"><i></i>${esc(r.status)}</span>
-    <span class="badge">${fmt(+r.overall_score, 1)} 分</span>
+    <span class="badge b-${STATUS_CLS[shownStatus] || 'bad'}"><i></i>${esc(shownStatus)}</span>
+    <span class="badge">${fmt(+shownScore, 1)} 分${repaired ? ' · 复检后' : ''}</span>
     <span class="badge">${fmt(+r.rows)} 行</span>
     <span class="badge">${res?.kind === 'detect' ? '不修复时：' : ''}${esc(r.train_policy)} · 训练帧 ${fmt(+r.train_frames)}</span>
-    ${res?.kind === 'govern' && r.repaired_file ? '<span class="badge b-fix"><i></i>已生成修复副本</span>' : ''}</div>`;
+    ${res?.kind === 'govern' && repaired ? '<span class="badge b-fix"><i></i>已生成修复副本</span>' : ''}</div>`;
   if (!raw.ok || !n) {
     return openDrawer(`${head}<div class="sect"><p class="banner" style="border-color:var(--line-2)">原始文件无法读取或没有数据行：${esc(raw.error || r.issue_details)}</p></div>${codeListHtml(codes, dict, r)}`);
   }
@@ -1003,7 +1071,7 @@ async function openEpisode(stage, ep, row = 0) {
         <div class="sect"><div class="tabs" id="dTabs"></div><div id="dChart"></div></div>
       </div>
       <div>
-        <div class="sect" style="margin-top:0"><h4>五维评分</h4><div class="dims">${dims.map((k) => { const v = +r[k + '_score']; return `<div class="dim"><span>${DIM_CN[k]}</span><div class="t"><i style="width:${Number.isFinite(v) ? v : 0}%"></i></div><span class="v">${Number.isFinite(v) ? fmt(v, 1) : '—'}</span></div>`; }).join('')}</div></div>
+        <div class="sect" style="margin-top:0"><h4>${repaired ? '修复前五维评分' : '五维评分'}</h4><div class="dims">${dims.map((k) => { const v = +r[k + '_score']; return `<div class="dim"><span>${DIM_CN[k]}</span><div class="t"><i style="width:${Number.isFinite(v) ? v : 0}%"></i></div><span class="v">${Number.isFinite(v) ? fmt(v, 1) : '—'}</span></div>`; }).join('')}</div></div>
         ${codeListHtml(codes, dict, r)}
         <div class="sect"><h4>处理决策</h4><dl class="kv">
           <dt>治理决策</dt><dd>${esc(r.train_policy)}</dd>
@@ -1080,7 +1148,51 @@ function codeListHtml(codes, dict, r) {
   return `<div class="sect"><h4>问题码（${codes.length}）</h4><div class="code-list">${codes.length ? codes.map((c) => `<div class="code-item"><span class="code"><i style="background:var(${CAT_VAR[catOf(c)]})"></i>${esc(c)}</span>${esc(details[c] || dict[c]?.description || '')}</div>`).join('') : '<span class="muted">未命中任何问题码</span>'}</div></div>`;
 }
 
+const CAMS = ['image', 'left_wrist_image', 'right_wrist_image'];
 const CAM_CN = { image: '场景相机', left_wrist_image: '左腕相机', right_wrist_image: '右腕相机' };
+const CODE_CN = {
+  J_SPIKE_JUMP: 'state / actions 相邻帧突跳',
+  J_STATE_ACTION_MISMATCH: 'state 与 actions 对不上',
+  J_ROT6D_INVALID: 'Rotation-6D 不满足正交约束',
+  J_GRIPPER_RANGE: '夹爪开度越界',
+  J_STATE_NONFINITE: 'state 有 NaN/Inf 空值',
+  J_ACTION_NONFINITE: 'actions 有 NaN/Inf 空值',
+  J_POSITION_ENVELOPE: '末端位置出现孤立越界值',
+  T_TIMESTAMP_GAP: '时间戳有掉帧缺口',
+  T_FRAME_INDEX_GAP: '帧号跳号，中间缺帧',
+  T_TIMESTAMP_NON_MONOTONIC: '时间戳重复或倒退',
+  T_TIMESTAMP_JITTER: '采样间隔抖动',
+  T_FRAME_ORDER_ERROR: '帧号重复或倒序',
+  T_INDEX_DISCONTINUITY: '全局 index 与帧号不同步',
+  T_TIMESTAMP_OFFSET: '时间戳基准不为 0',
+  T_TIMESTAMP_UNIT_MISMATCH: '时间戳单位标错',
+  T_TIMESTAMP_INVALID: '时间戳含非法值',
+  T_METADATA_LENGTH_MISMATCH: '元数据记录长度与实际不符',
+  C_IMAGE_SCREEN: '画面黑屏、白屏或低对比度',
+  C_IMAGE_BLUR: '画面模糊',
+  C_IMAGE_DUPLICATE: '相邻帧画面重复',
+  C_IMAGE_SHAPE: '图像分辨率或通道数不符',
+  C_FILE_UNREADABLE: '文件无法读取',
+  C_SCHEMA_MISSING_FIELD: '必需字段缺失',
+  C_SCHEMA_DTYPE_MISMATCH: '字段类型与声明不符',
+  S_IMAGE_PATH_MISMATCH: '图像路径与数据行局部不一致',
+  S_STREAM_MISSING: '某路相机整条没有图像',
+  S_SENSOR_LATE_START: '相机开头缺图',
+  S_SENSOR_EARLY_STOP: '相机结尾缺图',
+  S_SENSOR_DROPOUT: '相机中段断流',
+  S_STREAM_SHIFTED: '相机流整体错位',
+  S_TASK_INDEX_INVALID: '任务标签是未定义值',
+  S_TASK_SWITCH_WITHIN_EPISODE: '一条轨迹里任务标签中途变了',
+  S_TASK_META_MISMATCH: '任务标签与元数据不一致',
+  V_LOW_VISUAL_DIVERSITY: '画面多样性偏低',
+  V_LOW_INTERACTION: '有效交互帧偏少',
+  V_EPISODE_OVERLAP: '与其他轨迹重复',
+};
+function peakLag(values, L) {
+  let k = -1, best = -2;
+  (values || []).forEach((v, i) => { if (v != null && v > best) { best = v; k = i; } });
+  return k < 0 ? null : { lag: k - L, r: best };
+}
 function fixLabel(m) {
   const a = m.applied || '';
   const mm = /^(\w+) 图像整体移回 ([+-]?\d+) 帧/.exec(a);
@@ -1103,6 +1215,75 @@ function reasonLabel(r) {
   if (/重对齐/.test(r)) return '相机错位缺少内容证据，不移动画面';
   if (/写后逐单元格校验失败/.test(r)) return '写后回读校验失败，副本丢弃';
   return r.split('：')[0];
+}
+
+const signed = (n) => (n == null ? '—' : (n > 0 ? '+' : '') + n);
+function shiftFromText(text) {
+  const t = String(text || '');
+  const m = /(image|left_wrist_image|right_wrist_image)\s*图像整体移回\s*([+-]?\d+)\s*帧/.exec(t)
+    || /(image|left_wrist_image|right_wrist_image)\s*重对齐/.exec(t);
+  if (!m) return null;
+  const off = /图像整体移回\s*([+-]?\d+)\s*帧/.exec(t) || /path\s*偏移\s*([+-]?\d+)/.exec(t);
+  return { cam: m[1], frames: off ? +off[1] : null };
+}
+function crossR(text) {
+  const m = /跨相机运动相关[^；]*?r=([0-9.]+)/.exec(text || '');
+  return m ? +m[1] : null;
+}
+function armR(text) {
+  const m = /本臂运动[^；]*?r=([0-9.]+)/.exec(text || '');
+  return m ? +m[1] : null;
+}
+function codeLine(ev, codes, shift) {
+  const c = (codes || [])[0] || '';
+  if (shift) return `${CAM_CN[shift.cam] || shift.cam}画面整体错位 ${signed(shift.frames)} 帧`;
+  if (c === 'J_STATE_NONFINITE' && ev.flagged) return `state 有 ${fmt(ev.flagged)} 行空值（NaN/Inf）`;
+  if (c === 'J_POSITION_ENVELOPE' && ev.flagged) return `末端位置有 ${fmt(ev.flagged)} 行孤立越界`;
+  if (codes.length > 1) return `${CODE_CN[c] || c} · 另有 ${codes.length - 1} 类问题`;
+  return CODE_CN[c] || c;
+}
+function captionFor(ev, kind) {
+  const ep = `第 ${ev.ep} 条`;
+  const b = ev.brief || {};
+  const shift = b.shift || shiftFromText(b.applied || b.rejected);
+  const codes = ev.codes || [];
+  const finalCodes = ev.final_codes || [];
+  if (ev.error) return { text: `${ep} · 文件处理异常，已记录并继续批次`, meta: '其余轨迹照常处理' };
+  if (kind === 'govern') {
+    if (ev.repaired || ev.meta_patch) {
+      let what;
+      if (shift) what = `${CAM_CN[shift.cam] || shift.cam}画面整体错位 ${signed(shift.frames)} 帧 → 已移回`;
+      else if (ev.meta_patch) what = '元数据记录长度不符 → 只更新元数据';
+      else what = fixLabel({ applied: b.applied || '' });
+      const score = ev.score != null && ev.final_score != null ? `复检 ${fmt(ev.score, 2)} → ${fmt(ev.final_score, 2)} 分` : '';
+      return { text: `${ep} · ${what}`, meta: [ev.cells ? `改写 ${fmt(ev.cells)} 格` : '', score].filter(Boolean).join(' · ') };
+    }
+    if (b.rejected || ev.rejected) {
+      const r = crossR(b.rejected);
+      const why = reasonLabel((b.rejected || '').split('；')[0]);
+      const s = shift ? `${CAM_CN[shift.cam] || shift.cam}疑似错位 ${signed(shift.frames)} 帧` : why;
+      const evidence = r != null ? `跨相机相关只有 ${r.toFixed(2)}，低于 0.80` : '缺少足够的内容证据';
+      return { text: `${ep} · ${s} → 拒修`, meta: `${evidence} · 保持原样隔离` };
+    }
+    if (!finalCodes.length) return { text: `${ep} · 通过`, meta: `${fmt(ev.rows)} 行全部可进入训练` };
+    return { text: `${ep} · ${codeLine(ev, finalCodes, shift)}`, meta: '证据不足或无需改写，保持原样' };
+  }
+  if (!codes.length) return { text: `${ep} · 未命中阻断问题`, meta: `${fmt(ev.rows)} 行 · ${fmt(ev.seconds, 2)} 秒` };
+  const marked = ev.flagged ? `${fmt(ev.flagged)} 行被标记` : '整条轨迹级问题';
+  return { text: `${ep} · ${codeLine(ev, codes, shift)}`, meta: `${marked} · 共 ${fmt(ev.rows)} 行 · ${fmt(ev.seconds, 2)} 秒` };
+}
+
+function runsText(rows, max = 4) {
+  const xs = [...new Set(rows.map(Number).filter((v) => Number.isFinite(v)))].sort((a, b) => a - b);
+  if (!xs.length) return '—';
+  const out = [];
+  let a = xs[0], b = xs[0];
+  for (const x of xs.slice(1)) {
+    if (x === b + 1) b = x;
+    else { out.push([a, b]); a = b = x; }
+  }
+  out.push([a, b]);
+  return out.slice(0, max).map(([x, y]) => (x === y ? `第 ${x} 行` : `第 ${x}–${y} 行`)).join('、') + (out.length > max ? ' 等' : '');
 }
 function lagCorr(a, b, L = 12) {
   // 返回 lag ∈ [-L, L] 的相关系数；lag = +k 表示 a 第 t 行的画面对应 b 第 t+k 行（与 path 帧号偏移同号）
@@ -1132,6 +1313,42 @@ function needGovernHtml(what) {
   return `<div class="panel empty"><h3>${what}需要先完成安全治理</h3><p>回到第 3 步运行一次治理，或切换到回放模式。</p><button class="cta" data-goto="3">去安全治理</button></div>`;
 }
 
+function shiftPairs(res) {
+  const man = res.manifest || [];
+  const fixed = man.filter((m) => m.kind && m.kind !== '未修改' && /图像整体移回/.test(m.applied || ''));
+  const refused = man.filter((m) => m.kind === '未修改' && /重对齐/.test(m.rejected || ''));
+  const cfg = S.info?.compare_pair || {};
+  const pick = (arr, id) => arr.find((m) => +m.episode_index === +id) || arr[0] || null;
+  return { fixed: pick(fixed, cfg.fixed), refused: pick(refused, cfg.refused) };
+}
+
+function pairCard(m, kind, res, activeEp) {
+  if (!m) return '';
+  const ep = +m.episode_index;
+  const text = kind === 'fixed' ? m.applied : m.rejected;
+  const sh = shiftFromText(text);
+  const r = crossR(text);
+  const e = (res.episodes || []).find((x) => x.id === ep) || {};
+  const rTxt = r == null ? '—' : r.toFixed(2);
+  return `<button class="pair-case ${kind} ${activeEp === ep ? 'on' : ''}" data-ep="${ep}">
+    <span class="pc-kicker">相机疑似错位</span>
+    <div class="pc-top"><b>${epName(ep)}</b><span class="pc-r">相关度 <b>${rTxt}</b>${r != null ? ` ${kind === 'fixed' ? '≥' : '<'} 0.80` : ''}</span></div>
+    <div class="pc-verdict">${kind === 'fixed' ? `修了 · 移回 ${Math.abs(sh?.frames ?? 0)} 帧` : '没修 · 保持隔离'}</div>
+    <div class="pc-foot">${fmt(+m.score_before, 2)} ${kind === 'fixed' ? '→ ' + fmt(+m.score_after, 2) : '不变'} · ${fmt(e.train_frames)} 帧可训练</div>
+  </button>`;
+}
+
+function pairBannerHtml(res, activeEp) {
+  const pair = shiftPairs(res);
+  if (!pair.fixed && !pair.refused) return '';
+  return `<div class="panel pair">
+    <div class="pair-head">
+      <div><h3>同样的现象，为什么一个修、一个不修</h3><p>两张卡片用同一句话开头：「相机疑似错位」。区别只在内容证据够不够。</p></div>
+    </div>
+    <div class="pair-cases">${pairCard(pair.fixed, 'fixed', res, activeEp)}${pairCard(pair.refused, 'refused', res, activeEp)}</div>
+  </div>`;
+}
+
 async function renderCompare() {
   const list = $('#cmpList'), main = $('#cmpMain');
   const res = await ensureGovern();
@@ -1144,10 +1361,11 @@ async function renderCompare() {
   list.hidden = false;
   if (S.cmpFor === res.created && S.cmpEp != null) return;
   S.cmpFor = res.created;
+  const pair = shiftPairs(res);
+  const pairIds = new Set([pair.fixed, pair.refused].filter(Boolean).map((m) => +m.episode_index));
   const man = res.manifest || [];
   const fixed = man.filter((m) => m.kind !== '未修改');
   const refusedAll = man.filter((m) => m.kind === '未修改' && m.rejected);
-  // 拒修：把图像重对齐类排在前面，其余按原因去重展示
   const seen = new Set();
   const refused = [];
   for (const m of [...refusedAll].sort((a, b) => (/image|图像/.test(b.rejected) ? 1 : 0) - (/image|图像/.test(a.rejected) ? 1 : 0))) {
@@ -1161,10 +1379,30 @@ async function renderCompare() {
     const desc = kind === 'fix' ? fixLabel(m) : reasonLabel((m.rejected || '').split('；')[0]);
     return `<button class="case" data-ep="${m.episode_index}"><b>${epName(+m.episode_index)}</b><span class="sc">${kind === 'fix' ? `<s>${fmt(sb, 2)}</s> → ${fmt(sa, 2)}` : fmt(sb, 2)}</span><span class="d">${esc(desc)}</span></button>`;
   };
-  list.innerHTML = `<button class="case case-notes" data-ep="notes"><b>修复说明</b><span class="sc">${fixed.length} 条</span><span class="d">每一条修复的问题、做法、依据与注意事项，以及所有未修复的原因</span></button>`
-    + `<h4>已修复 · ${fixed.length} 条</h4>${fixed.map((m) => item(m, 'fix')).join('')}<h4>证据不足 · 拒修示例</h4>${refused.map((m) => item(m, 'ref')).join('')}`;
+  const mini = (m, kind) => {
+    if (!m) return '';
+    const ep = +m.episode_index;
+    const text = kind === 'fixed' ? m.applied : m.rejected;
+    const r = crossR(text);
+    return `<button class="case mini-case ${kind}" data-ep="${ep}">
+      <span class="mc-kicker">相机疑似错位</span>
+      <b>${epName(ep)}</b>
+      <em>${r == null ? '' : '相关度 ' + r.toFixed(2) + '，'}${kind === 'fixed' ? '修了' : '没修'}</em>
+    </button>`;
+  };
+  const otherFixed = fixed.filter((m) => !pairIds.has(+m.episode_index));
+  const otherRefused = refused.filter((m) => !pairIds.has(+m.episode_index));
+  list.innerHTML = `<div class="mini-pair">
+      <h4>同样的现象，为什么一个修、一个不修</h4>
+      <div class="mini-cases">${mini(pair.fixed, 'fixed')}${mini(pair.refused, 'refused')}</div>
+    </div>
+    <button class="case case-notes" data-ep="notes"><b>修复说明</b><span class="sc">点开看</span><span class="d">每类问题怎么修、必须满足什么条件、哪些坚决不修</span></button>
+    <h4>其他已修复 · ${otherFixed.length} 条</h4>${otherFixed.map((m) => item(m, 'fix')).join('')}
+    <h4>其他拒修示例</h4>${otherRefused.map((m) => item(m, 'ref')).join('')}`;
   $$('.case', list).forEach((b) => b.addEventListener('click', () => (b.dataset.ep === 'notes' ? showNotesInStep4() : selectCase(+b.dataset.ep))));
-  showNotesInStep4();
+  const start = pair.fixed ? +pair.fixed.episode_index : null;
+  if (start != null) selectCase(start);
+  else showNotesInStep4();
 }
 
 function showNotesInStep4() {
@@ -1241,6 +1479,7 @@ async function renderRepairNotes(stage, host, onOpen) {
 
 async function selectCase(ep, stage = 'govern', main = $('#cmpMain')) {
   const inStep4 = main.id === 'cmpMain';
+  if (S.cmpTimer) { clearInterval(S.cmpTimer); S.cmpTimer = null; }
   if (inStep4) {
     S.cmpEp = ep;
     $$('#cmpList .case').forEach((b) => b.classList.toggle('on', b.dataset.ep === String(ep)));
@@ -1257,21 +1496,85 @@ async function selectCase(ep, stage = 'govern', main = $('#cmpMain')) {
   const gone = before.filter((c) => !after.includes(c));
   const audit = d.audit || [];
   const audCodes = [...new Set(audit.map((a) => a.repair_code))];
-  const kindBadge = fixed ? `<span class="badge b-fix"><i></i>${esc(m.kind)}</span>` : '<span class="badge b-hint"><i></i>拒修 · 保持原样</span>';
-  main.innerHTML = `<div class="panel cmp-head">
-      <div class="cmp-title"><h2>${epName(ep)}</h2>${kindBadge}<span class="badge">${esc(r.train_policy)}</span><span class="badge">训练帧 ${fmt(+r.train_frames)}</span></div>
-      <p class="cmp-method">${esc(fixed ? m.applied : m.rejected)}</p>
-      <div class="ba">
-        <div class="ba-side"><div class="l">修复前 · ${esc(m.status_before || r.status)}</div><div class="s">${fmt(+m.score_before, 2)}<small class="muted" style="font-size:15px"> 分</small></div><div class="codes">${before.map((c) => `<span class="code ${gone.includes(c) ? 'gone' : ''}"><i style="background:var(${CAT_VAR[catOf(c)]})"></i>${esc(c)}</span>`).join('') || '<span class="muted">无</span>'}</div></div>
-        <div class="ba-arrow">→</div>
-        <div class="ba-side"><div class="l">${fixed ? '修复后复检' : '保持原样'} · ${esc(m.status_after || r.final_status)}</div><div class="s">${fmt(+m.score_after, 2)}<small class="muted" style="font-size:15px"> 分</small></div><div class="codes">${after.map((c) => `<span class="code ${before.includes(c) ? '' : 'new'}"><i style="background:var(${CAT_VAR[catOf(c)]})"></i>${esc(c)}</span>`).join('') || '<span class="muted">问题码全部消除</span>'}</div></div>
+  const isShift = audCodes.includes('S_STREAM_SHIFTED')
+    || (fixed ? /图像整体移回/.test(m.applied || '') : /重对齐/.test(m.rejected || ''));
+  const res = S.res[stage] || {};
+  const pair = shiftPairs(res);
+  let head;
+  if (isShift) {
+    const text = fixed ? m.applied : m.rejected;
+    const sh = shiftFromText(text);
+    const cr = crossR(text);
+    const ar = armR(text);
+    const gate = cr != null ? { r: cr, thr: 0.8, label: '跨相机运动相关' } : ar != null ? { r: ar, thr: 0.6, label: '本臂运动相关' } : null;
+    const epInfo = (res.episodes || []).find((x) => x.id === ep) || {};
+    const cam = sh?.cam ? CAM_CN[sh.cam] : '相机';
+    const frames = Math.abs(sh?.frames ?? 0);
+    head = `<div class="panel cmp-head shift-head">
+      <div class="cmp-title">
+        <h2>${epName(ep)}</h2>
+        <span class="badge ${fixed ? 'b-fix' : 'b-hint'}"><i></i>${fixed ? '修了' : '没修'}</span>
+        <span class="verdict-line">${cam}${fixed ? '整体错位' : '疑似错位'} ${signed(sh?.frames)} 帧${fixed ? ' · 已移回' : ' · 保持原样'}</span>
       </div>
-    </div>
-    <div class="panel card" id="cmpViz"><div class="sub"><span class="spin"></span> 生成对比图</div></div>
-    ${fixed ? auditHtml(audit, m) : ''}`;
+      <p class="cmp-method">${fixed
+        ? `同一行的画面和机械臂状态错开 ${frames} 帧。${gate ? `${gate.label} r=${gate.r.toFixed(2)}（门槛 ${gate.thr.toFixed(2)}），` : ''}对端恰好缺 ${frames} 帧；修复只移动 ${cam} 这一列。`
+        : `path 偏移 ${signed(sh?.frames)} 帧，但${gate ? `${gate.label}只有 ${gate.r.toFixed(2)}（门槛 ${gate.thr.toFixed(2)}）` : '内容证据不足'}。偏移整齐不等于画面真的错了，证据不足就不动。`}</p>
+      <div class="cmp-foot">
+        <span class="badge">训练帧 ${fmt(epInfo.train_frames)}</span>
+        <span class="badge">${fixed ? `改写 ${fmt(audit.length)} 格` : '0 格改写'}</span>
+        <span class="footnote">${fixed ? `复检 ${fmt(+m.score_before, 2)} → ${fmt(+m.score_after, 2)} 分` : `复检 ${fmt(+m.score_before, 2)} 分 · 保持原样`}</span>
+        ${stage === 'govern' ? '<button class="ghost sm" data-notes>修复说明</button>' : ''}
+      </div>
+    </div>${stage === 'govern' ? pairBannerHtml(res, ep) : ''}`;
+  } else {
+    const epInfo = (res.episodes || []).find((x) => x.id === ep) || {};
+    const stateDim = d.raw.state?.[0]?.length || 0;
+    const actionDim = d.raw.actions?.[0]?.length || 0;
+    const totalCells = d.raw.n * (stateDim + actionDim);
+    let headline = fixed ? `修了：${fmt(audit.length)} 格改动` : '拒修：保持原样';
+    let detail = fixed ? (m.applied || '') : (m.rejected || '');
+    let count = fixed ? `改写 ${fmt(audit.length)} 格` : '0 格改写';
+    if (!fixed) {
+      headline = `拒修：${reasonLabel((m.rejected || '').split('；')[0])}`;
+      detail = m.rejected || '';
+    } else if (before.includes('J_STATE_NONFINITE')) {
+      headline = `state 里 ${fmt(audit.length)} 个空值，只补这 ${fmt(audit.length)} 格`;
+      detail = '只补非有限分量；Rotation-6D 按正交约束解出，其余分量逐位不变。';
+      count = `改写 ${fmt(audit.length)} / ${fmt(totalCells)} 格`;
+    } else if (before.includes('J_POSITION_ENVELOPE')) {
+      headline = `末端位置 ${fmt(audit.length)} 个越界分量，只改越界的那几格`;
+      detail = '孤立单帧越界才修：取前后帧均值；连续越界保持原样。';
+      count = `改写 ${fmt(audit.length)} / ${fmt(totalCells)} 格`;
+    } else if (before.some((c) => /^S_TASK/.test(c))) {
+      headline = '任务标签和元数据不一致，只改 task_index 这一列';
+      detail = '按 episodes.jsonl 唯一登记的任务统一整条；画面、动作、时间戳都不动。';
+      count = `改写 ${fmt(audit.length)} 行 task_index`;
+    } else if (before.includes('C_SCHEMA_DTYPE_MISMATCH')) {
+      headline = '字段类型和声明不符，无损转换';
+      detail = '按 info.json 声明转换存储类型，每个数值逐位不变。';
+      count = '0 个数值变化';
+    } else if (m.kind === '仅元数据补丁') {
+      headline = '只改元数据记录，Parquet 不动';
+      detail = 'episodes.jsonl 的记录长度与实际行数对齐；数据文件一个字节不改。';
+      count = 'Parquet 0 改动';
+    }
+    head = `<div class="panel cmp-head shift-head">
+      <div class="cmp-title"><h2>${epName(ep)}</h2><span class="badge ${fixed ? 'b-fix' : 'b-hint'}"><i></i>${fixed ? '修了' : '没修'}</span><span class="verdict-line">${esc(headline)}</span></div>
+      <p class="cmp-method">${esc(detail)}</p>
+      <div class="cmp-foot">
+        <span class="badge">训练帧 ${fmt(epInfo.train_frames ?? r.train_frames)}</span>
+        <span class="badge">${esc(count)}</span>
+        <span class="footnote">${fixed ? `复检 ${fmt(+m.score_before, 2)} → ${fmt(+m.score_after, 2)} 分` : `复检 ${fmt(+m.score_before, 2)} 分 · 保持原样`}</span>
+        ${stage === 'govern' ? '<button class="ghost sm" data-notes>修复说明</button>' : ''}
+      </div>
+    </div>`;
+  }
+  main.innerHTML = head + `<div class="panel card" id="cmpViz"><div class="sub"><span class="spin"></span> 生成对比图</div></div>${fixed ? auditHtml(audit, m) : ''}`;
+  $$('[data-notes]', main).forEach((b) => b.addEventListener('click', () => showNotesInStep4()));
+  $$('.pair-case', main).forEach((b) => b.addEventListener('click', () => { selectCase(+b.dataset.ep); window.scrollTo({ top: 0, behavior: 'smooth' }); }));
   const viz = $('#cmpViz', main);
   try {
-    if (audCodes.includes('S_STREAM_SHIFTED') || (!fixed && /image 重对齐|图像/.test(m.rejected || ''))) await vizShift(viz, d, ep, fixed);
+    if (isShift) await vizShift(viz, d, ep, fixed);
     else if (audCodes.some((c) => /NONFINITE/.test(c))) vizCells(viz, d, 'NaN 稀疏补值：只补非有限分量，其余分量逐位不变');
     else if (audCodes.includes('J_POSITION_ENVELOPE')) vizCells(viz, d, '孤立单帧越界：只改越界分量');
     else if (audCodes.some((c) => /^S_TASK/.test(c))) vizTask(viz, d);
@@ -1298,12 +1601,12 @@ function auditVal(v) {
 
 function auditHtml(audit, m) {
   const rows = audit.slice(0, 40);
-  return `<div class="panel card"><div class="card-h"><h3>逐单元格修复审计</h3><span class="sub">共 ${fmt(audit.length)} 格 · repair_audit.csv</span></div>
-    <div class="tbl-wrap" style="max-height:340px"><table class="tbl"><thead><tr><th>行</th><th>字段</th><th>原值</th><th>新值</th><th>方法</th></tr></thead><tbody>
+  return `<details class="audit-fold panel card"><summary><b>逐单元格修复审计</b><span>共 ${fmt(audit.length)} 格 · repair_audit.csv · 点开看原值 → 新值</span></summary>
+    <div class="tbl-wrap" style="max-height:340px;margin-top:12px"><table class="tbl"><thead><tr><th>行</th><th>字段</th><th>原值</th><th>新值</th><th>方法</th></tr></thead><tbody>
     ${rows.map((a) => `<tr><td>${esc(a.row)}</td><td class="mono">${esc(a.field)}</td><td class="mono del">− ${esc(auditVal(a.original_value))}</td><td class="mono add">+ ${esc(auditVal(a.repaired_value))}</td><td>${esc(a.method)}</td></tr>`).join('')}
     </tbody></table></div>
     <dl class="kv" style="margin-top:12px"><dt>源文件 SHA256</dt><dd class="mono">${esc((m.source_sha256 || '').slice(0, 24))}… 原始文件只读未改</dd>
-    ${m.repaired_sha256 ? `<dt>副本 SHA256</dt><dd class="mono">${esc(m.repaired_sha256.slice(0, 24))}… 写后逐格回读核验通过（未通过的副本会被直接丢弃）</dd>` : ''}</dl></div>`;
+    ${m.repaired_sha256 ? `<dt>副本 SHA256</dt><dd class="mono">${esc(m.repaired_sha256.slice(0, 24))}… 写后逐格回读核验通过（未通过的副本会被直接丢弃）</dd>` : ''}</dl></details>`;
 }
 
 function parseGates(text) {
@@ -1322,79 +1625,158 @@ async function vizShift(viz, d, ep, fixed) {
   const raw = d.raw, after = d.after;
   const n = raw.n;
   let cam = ['left_wrist_image', 'right_wrist_image', 'image'].find((c) => (d.audit || []).some((a) => a.field === c));
-  if (!cam) { const mm = /(image|left_wrist_image|right_wrist_image) 重对齐/.exec(d.manifest?.rejected || ''); cam = mm ? mm[1] : 'image'; }
-  const camCn = CAM_CN[cam];
+  if (!cam) {
+    const mm = /(image|left_wrist_image|right_wrist_image)\s*重对齐/.exec(d.manifest?.rejected || '');
+    cam = mm ? mm[1] : 'image';
+  }
+  const camCn = CAM_CN[cam] || cam;
   const refs = cam === 'image' ? ['left_wrist_image', 'right_wrist_image'] : [cam === 'left_wrist_image' ? 'right_wrist_image' : 'left_wrist_image'];
-  const gates = parseGates(fixed ? d.manifest?.applied : d.manifest?.rejected);
-  const pnBefore = (raw.paths?.[cam] || []).map(pathNum);
-  const pnAfter = after ? (after.paths?.[cam] || []).map(pathNum) : null;
-  const offB = pnBefore.map((p, i) => (p == null ? null : p - i));
-  const offA = pnAfter ? pnAfter.map((p, i) => (p == null ? null : p - i)) : null;
+  const text = fixed ? d.manifest?.applied : d.manifest?.rejected;
+  const gates = parseGates(text);
+  const rr = crossR(text);
+  const ar = armR(text);
+  const gate = rr != null ? { r: rr, thr: 0.8, label: '跨相机' } : ar != null ? { r: ar, thr: 0.6, label: '本臂' } : null;
+  const pn = (raw.paths?.[cam] || []).map(pathNum);
+  const offB = pn.map((p, i) => (p == null ? null : p - i));
   const fin = offB.filter((v) => v != null).sort((a, b) => a - b);
   const off = fin.length ? fin[Math.floor(fin.length / 2)] : 0;
-  const L = Math.max(12, Math.abs(off) + 4);
+  const L = Math.max(12, Math.abs(off) + 6);
   const eRaw = mo.raw?.energy || {}, eAft = mo.after?.energy || {};
-  const curves = [];
-  const peakTxt = [];
-  const peak = (arr) => { let k = -1, best = -2; arr.forEach((v, i) => { if (v != null && v > best) { best = v; k = i; } }); return k < 0 ? null : { lag: k - L, r: best }; };
-  refs.forEach((rc, i) => {
-    const b = lagCorr(eRaw[cam] || [], eRaw[rc] || [], L);
-    curves.push({ name: `修复前 · 参照${CAM_CN[rc]}`, values: b, color: 'var(--bad)', dash: i > 0 });
-    const pb = peak(b);
-    if (pb) peakTxt.push(`修复前 vs ${CAM_CN[rc]}：峰值在 ${pb.lag > 0 ? '+' : ''}${pb.lag} 帧（r = ${pb.r.toFixed(2)}）`);
-    if (fixed && eAft[cam]) {
-      const a = lagCorr(eAft[cam], eAft[rc] || [], L);
-      curves.push({ name: `修复后 · 参照${CAM_CN[rc]}`, values: a, color: 'var(--fix)', dash: i > 0 });
-      const pa = peak(a);
-      if (pa) peakTxt.push(`修复后：峰值在 ${pa.lag > 0 ? '+' : ''}${pa.lag} 帧（r = ${pa.r.toFixed(2)}）`);
-    }
+  let best = null;
+  for (const rc of refs) {
+    const c = lagCorr(eRaw[cam] || [], eRaw[rc] || [], L);
+    const pk = peakLag(c, L);
+    if (pk && (!best || pk.r > best.pk.r)) best = { rc, c, pk };
+  }
+  const ref = best?.rc || refs[0];
+  const beforeCurve = best?.c || [];
+  const beforePk = best?.pk || null;
+  let afterCurve = null, afterPk = null;
+  if (fixed && eAft[cam]) {
+    afterCurve = lagCorr(eAft[cam], eAft[ref] || [], L);
+    afterPk = peakLag(afterCurve, L);
+  }
+  const row0 = (() => {
+    const e = (mo.raw?.energy?.[cam] || []).map((v, i) => ({ v, i }))
+      .filter((x) => x.v != null && x.i > 2 && x.i < n - 3)
+      .sort((a, b) => b.v - a.v);
+    return e[0] ? e[0].i : Math.min(n - 1, Math.max(25, Math.abs(off) + 20));
+  })();
+  const auditLen = (d.audit || []).length;
+  const moved = fixed ? (after?.paths?.[cam] || []).filter(Boolean).length : 0;
+  const blanked = fixed ? n - moved : 0;
+  const pathDiff = (c) => {
+    const a = raw.paths?.[c] || [], b = after?.paths?.[c];
+    return a.reduce((s, p, i) => s + (p !== (b?.[i] ?? p) ? 1 : 0), 0);
+  };
+  const otherTxt = CAMS.filter((c) => c !== cam).map((c) => {
+    const d = pathDiff(c);
+    return d ? `${CAM_CN[c]} ${fmt(d)} 格改动` : `${CAM_CN[c]} 未动`;
+  }).join(' · ');
+  const otherDiffTotal = CAMS.filter((c) => c !== cam).reduce((s, c) => s + pathDiff(c), 0);
+  const camCell = (side, c, cls = '') => `<figure class="split-cam ${cls}" data-side="${side}" data-cam="${c}"><img alt=""><figcaption>${CAM_CN[c]}<em class="frame-no">—</em></figcaption></figure>`;
+  const otherCams = CAMS.filter((c) => c !== cam);
+  const hero = (side) => `<figure class="split-hero" data-side="${side}" data-cam="${cam}"><img alt=""><figcaption>${CAM_CN[cam]} · 错位的那一路<em class="frame-no">—</em></figcaption></figure>`;
+  const thumbs = (side) => `<div class="split-thumbs">${otherCams.map((c) => camCell(side, c)).join('')}</div>`;
+  const vals = [...beforeCurve, ...(afterCurve || [])].filter((v) => v != null && Number.isFinite(v));
+  viz.innerHTML = `<div class="card-h"><h3>同一行，修复前 vs 修复后</h3><span class="sub">左右两侧始终停在同一数据行；拖动或播放</span></div>
+    <div class="split ${fixed ? '' : 'one-sided'}">
+      <div class="split-side">
+        <div class="split-h"><span class="dot bad"></span><b>修复前</b><small>原始图像</small></div>
+        ${hero('raw')}${thumbs('raw')}
+      </div>
+      <div class="split-mid"><span>同一行</span><b>→</b><small id="vzRowMid"></small></div>
+      <div class="split-side ${fixed ? '' : 'refused'}">
+        <div class="split-h"><span class="dot ${fixed ? 'fix' : 'bad'}"></span><b>${fixed ? '修复后' : '没有修复'}</b><small>${fixed ? 'Parquet 副本' : '保持原样'}</small></div>
+        ${fixed
+          ? `${hero('after')}${thumbs('after')}`
+          : `<div class="refuse-body">
+               <div class="refuse-stamp">没修</div>
+               <p>${camCn} path 偏移 ${signed(off)} 帧，但门控统计只有 r=${gate ? gate.r.toFixed(2) : '—'}，低于 ${gate ? gate.thr.toFixed(2) : '0.80'}。</p>
+               <p>如果强行移回，就是按一个没有内容证据的偏移去改画面。</p>
+             </div>`}
+      </div>
+    </div>
+    <div class="split-scrub">
+      <button class="ghost sm" id="vzPlay">▶ 播放</button>
+      <input type="range" id="vzRow" min="0" max="${n - 1}" value="${row0}">
+      <span class="rowlab" id="vzRowLab"></span>
+    </div>
+    <p class="split-note" id="vzAlign"></p>
+    <div class="proof">
+      <div>
+        <div class="proof-h">
+          <div>
+            <div class="mini-h">画面运动互相关 vs 时滞 · 参照${CAM_CN[ref]}</div>
+            <div class="peak-move ${fixed && afterPk ? '' : 'bad'}">${fixed && afterPk
+              ? `<b>${signed(beforePk?.lag)}</b><span>→</span><b>${signed(afterPk.lag)}</b><small>峰值时滞</small>`
+              : `<b>${signed(beforePk?.lag)}</b><small>峰值时滞 · 门控 r=${gate ? gate.r.toFixed(2) : '—'}</small>`}</div>
+          </div>
+          <div class="peak-txt">${fixed
+            ? `移回前，画面运动的峰值落在 ${signed(beforePk?.lag)} 帧；驱动修复的${gate ? gate.label : ''}门控相关 r=${gate ? gate.r.toFixed(2) : '—'}（门槛 ${gate ? gate.thr.toFixed(2) : '0.80'}）；移回后峰值回到 ${signed(afterPk?.lag)} 帧。`
+            : `峰值落在 ${signed(beforePk?.lag)} 帧；${gate ? gate.label : ''}门控相关只有 r=${gate ? gate.r.toFixed(2) : '—'}（门槛 ${gate ? gate.thr.toFixed(2) : '0.80'}）。偏移整齐，但内容证据不足，所以不移动。`}<br><span class="muted">曲线是相邻帧灰度差能量的互相关，用来展示时滞位置；门控数值取自 repair_manifest。</span></div>
+        </div>
+        <div id="vzLag"></div>
+      </div>
+      <div>
+        <div class="mini-h">修复门控：不是看偏移猜，是看画面内容</div>
+        <div class="evidence" id="vzGate"></div>
+        <p class="note">必须同时满足：path 帧号恒定偏移、对端恰好缺图、本臂相关 r ≥ 0.60 或跨相机相关 r ≥ 0.80，且没有反向证据。</p>
+      </div>
+    </div>
+    <div class="changed">
+      <div class="chg-main ${fixed ? '' : 'bad'}"><b>${fmt(auditLen)}</b><span>格改写<br><small>${fixed ? `${fmt(moved)} 行移回 + ${fmt(blanked)} 行显式置空` : '没有生成修复副本'}</small></span></div>
+      <div class="chg-keep"><b>${fixed ? fmt(otherDiffTotal) : '—'}</b><span>格改动<br><small>${fixed ? otherTxt : '整条保持原样'}</small></span></div>
+      <div class="chg-verdict">${fixed ? `复检 ${fmt(+d.manifest.score_before, 2)} → <b>${fmt(+d.manifest.score_after, 2)}</b><small>分数只是注脚</small>` : `<b>0</b> 帧进入训练<small>${esc(d.report.train_policy || '')}</small>`}</div>
+    </div>`;
+  const setImg = (fig, src, row, path) => {
+    const img = $('img', fig);
+    const missing = !path;
+    fig.classList.toggle('missing', missing);
+    if (missing) { img.removeAttribute('src'); img.style.visibility = 'hidden'; }
+    else { img.style.visibility = ''; img.src = `/api/frame?stage=${d.stage}&ep=${ep}&row=${row}&cam=${fig.dataset.cam}&src=${src}`; }
+    $('.frame-no', fig).textContent = missing ? '缺图' : '第 ' + pathNum(path) + ' 帧';
+  };
+  const setRow = (i) => {
+    i = Math.max(0, Math.min(n - 1, i));
+    $('#vzRow', viz).value = i;
+    $$('figure[data-side=raw]', viz).forEach((fig) => setImg(fig, 'raw', i, raw.paths?.[fig.dataset.cam]?.[i]));
+    if (fixed) $$('figure[data-side=after]', viz).forEach((fig) => setImg(fig, 'after', i, after?.paths?.[fig.dataset.cam]?.[i]));
+    const b = raw.paths?.[cam]?.[i];
+    const a = after?.paths?.[cam]?.[i];
+    $('#vzAlign').innerHTML = fixed
+      ? `<b>${camCn}</b>：修复前显示第 ${b ? pathNum(b) : '—'} 帧，修复后显示第 ${a ? pathNum(a) : '缺图'} 帧。${otherTxt}。`
+      : `<b>${camCn}</b>：仍显示第 ${b ? pathNum(b) : '—'} 帧。没有生成修复副本，整条保持隔离。`;
+    $('#vzRowLab').textContent = `第 ${i} 行 · frame ${raw.frame_index?.[i] ?? '—'}`;
+    $('#vzRowMid').textContent = `第 ${i} 行`;
+  };
+  const btn = $('#vzPlay', viz);
+  const stop = () => { if (S.cmpTimer) clearInterval(S.cmpTimer); S.cmpTimer = null; btn.textContent = '▶ 播放'; };
+  btn.addEventListener('click', () => {
+    if (S.cmpTimer) return stop();
+    let i = +$('#vzRow', viz).value;
+    if (i >= n - 1) i = 0;
+    btn.textContent = '❚❚ 暂停';
+    S.cmpTimer = setInterval(() => { i += 1; if (i >= n) return stop(); setRow(i); }, 1000 / (S.info.dataset.fps || 10));
   });
-  viz.innerHTML = `<div class="card-h"><h3>${camCn}${fixed ? '整体错位：证据充分，移回真实画面' : '疑似错位：内容证据不足，拒绝移动画面'}</h3><span class="sub">只移动已有图像字节，空出的端点显式置空</span></div>
-    <div class="two">
-      <div><div class="mini-h">① 图像文件帧号 − 数据行号：path 记录的偏移为 ${off >= 0 ? '+' : ''}${off} 帧</div><div id="vzPath"></div></div>
-      <div><div class="mini-h">② 门控证据（算子统计量，来自 repair_manifest）</div><div class="evidence" id="vzGate"></div></div>
-    </div>
-    <div class="two sect">
-      <div><div class="mini-h">③ 跨相机画面运动互相关 vs 时滞</div><div id="vzLag"></div><p class="note">${peakTxt.map(esc).join('<br>')}<br>演示可视化：相邻帧灰度差能量的相关系数，仅用于直观展示时滞位置。</p></div>
-      <div><div class="mini-h">④ ${fixed ? '修复后' : '原始数据'}：${camCn}与${CAM_CN[refs[0]]}的画面运动（归一化）</div><div id="vzTS"></div>${fixed ? '' : `<p class="note">整条轨迹进入「${esc(d.report.train_policy)}」，不让伪同步数据进入训练。</p>`}</div>
-    </div>
-    <div class="sect"><div class="mini-h">⑤ 同一数据行的画面：${fixed ? '修复前 / 修复后' : '原始数据'}（拖动选择行，右下角为图像文件帧号）</div>
-      <div class="scrub"><input type="range" id="vzRow" min="0" max="${n - 1}" value="${Math.min(Math.abs(off) + 20, n - 1)}"><span class="rowlab" id="vzRowLab"></span></div>
-      <div class="strip" id="vzStrip"></div></div>`;
-  lineChart($('#vzPath', viz), {
-    n, height: 170, yMin: Math.min(-1, off - 2), yMax: Math.max(1, off + 2),
-    series: [{ name: '修复前', values: offB, color: 'var(--bad)' }, ...(offA ? [{ name: '修复后', values: offA, color: 'var(--fix)' }] : [])],
-    thresholds: [{ y: 0, label: '对齐 = 0' }],
-    legendExtra: offA ? '<span class="muted">修复后开头缺失的几行 = 显式置空的缺图</span>' : '',
+  $('#vzRow', viz).addEventListener('input', (e) => { stop(); setRow(+e.target.value); });
+  lineChart($('#vzLag', viz), {
+    n: 2 * L + 1, height: 240, yMin: Math.min(-0.2, ...vals), yMax: 1,
+    xFmt: (i) => signed(i - L), xName: '时滞',
+    xTicks: Array.from({ length: 2 * L + 1 }, (_, i) => i).filter((i) => (i - L) % 5 === 0),
+    series: [
+      { name: `修复前 · 参照${CAM_CN[ref]}`, values: beforeCurve, color: 'var(--bad)', width: 2.6 },
+      ...(afterCurve ? [{ name: `修复后 · 参照${CAM_CN[ref]}`, values: afterCurve, color: 'var(--fix)', width: 2.6 }] : []),
+    ],
+    thresholds: [{ y: gate ? gate.thr : 0.8, label: `门控 ${gate ? gate.thr.toFixed(2) : '0.80'}` }],
+    vlines: [{ x: L, label: '0' }, ...(beforePk ? [{ x: L + beforePk.lag, label: '修复前峰值' }] : []), ...(afterPk ? [{ x: L + afterPk.lag, label: '修复后峰值' }] : [])],
   });
   $('#vzGate', viz).innerHTML = gates.length ? gates.map((g) => {
     const pass = g.r >= g.thr;
-    return `<div class="gate"><span>${esc(g.label)}</span><b>r = ${g.r.toFixed(3)} ${pass ? '≥' : '<'} ${g.thr}${g.gain != null ? ` · 增益 ${g.gain.toFixed(3)}` : ''}</b>
+    return `<div class="gate ${pass ? 'pass' : 'fail'}"><span>${esc(g.label)}</span><b>r = ${g.r.toFixed(3)} ${pass ? '≥' : '<'} ${g.thr}${g.gain != null ? ` · 增益 ${g.gain.toFixed(3)}` : ''}</b>
       <div class="meter2"><i style="width:${Math.min(Math.max(g.r, 0), 1) * 100}%;background:var(${pass ? '--ok' : '--bad'})"></i><u style="left:${g.thr * 100}%"></u></div></div>`;
-  }).join('') + '<p class="note">移动画面需同时满足：path 帧号恒定偏移 k、对端恰好缺 |k| 帧、本臂运动相关 r ≥ 0.6 或跨相机相关 r ≥ 0.8，且无反向矛盾证据。</p>'
-    : '<p class="note">门控证据见上方说明。</p>';
-  lineChart($('#vzLag', viz), {
-    n: 2 * L + 1, height: 170, xFmt: (i) => { const v = i - L; return (v > 0 ? '+' : '') + v; }, xName: '时滞',
-    xTicks: Array.from({ length: 2 * L + 1 }, (_, i) => i).filter((i) => (i - L) % 5 === 0),
-    series: curves, vlines: [{ x: L, label: '0' }, ...(off ? [{ x: L + off, label: `path ${off > 0 ? '+' : ''}${off}` }] : [])],
-  });
-  const src = fixed && eAft[cam] ? eAft : eRaw;
-  lineChart($('#vzTS', viz), { n, height: 170, yMin: 0, yMax: 1, series: [{ name: camCn, values: norm01(src[cam] || []), color: 'var(--c-s)' }, { name: CAM_CN[refs[0]], values: norm01(src[refs[0]] || []), color: 'var(--c-t)' }] });
-  const strip = $('#vzStrip', viz);
-  const setRow = (i) => {
-    const rows = [0, 1, 2, 3, 4, 5].map((k) => Math.min(n - 1, Math.max(0, i - 2 + k)));
-    $('#vzRowLab', viz).textContent = `第 ${rows[0]}–${rows[5]} 行`;
-    const cell = (s, c, r) => {
-      const p = (s === 'after' ? after?.paths?.[c]?.[r] : raw.paths?.[c]?.[r]);
-      return `<div class="cam ${p ? '' : 'missing'}">${p ? `<img src="/api/frame?stage=${d.stage}&ep=${ep}&row=${r}&cam=${c}&src=${s}" alt="">` : ''}<span>第 ${r} 行</span><em>${p ? esc(String(pathNum(p))) : '空'}</em></div>`;
-    };
-    const refCam = refs[0];
-    strip.innerHTML = `<span class="rl">参照：${CAM_CN[refCam]}</span>${rows.map((r) => cell('raw', refCam, r)).join('')}`
-      + `<span class="rl">${fixed ? '修复前' : '原始'}：${camCn}</span>${rows.map((r) => cell('raw', cam, r)).join('')}`
-      + (fixed ? `<span class="rl">修复后：${camCn}</span>${rows.map((r) => cell('after', cam, r)).join('')}` : '');
-  };
-  $('#vzRow', viz).addEventListener('input', (e) => setRow(+e.target.value));
-  setRow(+$('#vzRow', viz).value);
+  }).join('') : '<p class="note">门控证据见上方说明。</p>';
+  setRow(row0);
 }
 
 function vizCells(viz, d, title) {
@@ -1403,22 +1785,26 @@ function vizCells(viz, d, title) {
   const comps = [...new Set(d.audit.map((a) => a.field).filter((f) => /^state\[\d+\]$|^actions\[\d+\]$/.test(f)))];
   const rowsBy = {};
   for (const a of d.audit) (rowsBy[a.field] = rowsBy[a.field] || []).push(+a.row);
-  const label = (f) => {
-    const k = +/\[(\d+)\]/.exec(f)[1];
-    const arm = k < 10 ? '左臂' : '右臂', j = k % 10;
-    const part = j < 3 ? `末端位置 ${'xyz'[j]}` : j < 9 ? `Rotation-6D 第 ${j - 2} 分量` : '夹爪';
-    return `${f.split('[')[0]}[${k}] ${arm}${part}`;
-  };
   const rotArms = [...new Set(comps.map((f) => +/\[(\d+)\]/.exec(f)[1]).filter((k) => k % 10 >= 3 && k % 10 < 9).map((k) => (k < 10 ? 'left' : 'right')))];
+  const stateDim = raw.state?.[0]?.length || 0;
+  const actionDim = raw.actions?.[0]?.length || 0;
+  const totalCells = n * (stateDim + actionDim);
+  const pctCells = totalCells ? ((d.audit.length / totalCells) * 100).toFixed(1) : null;
+  const sb = d.manifest?.score_before, sa = d.manifest?.score_after;
   viz.innerHTML = `<div class="card-h"><h3>${esc(title)}</h3><span class="sub">${comps.length} 个分量 · ${d.audit.length} 格</span></div>
-    <div class="two" id="vzCells"></div>
+    <div class="changed">
+      <div class="chg-main"><b>${fmt(d.audit.length)}</b><span>格改写<br><small>${fmt(comps.length)} 个分量${pctCells ? ' · 占 ' + pctCells + '%' : ''}</small></span></div>
+      <div class="chg-keep"><b>${totalCells ? fmt(totalCells - d.audit.length) : '—'}</b><span>格逐位不变<br><small>${totalCells ? `${fmt(stateDim + actionDim)} 维 × ${fmt(n)} 行` : '其余列未动'}</small></span></div>
+      <div class="chg-verdict">${sb != null ? `复检 ${fmt(sb, 2)} → <b>${fmt(sa, 2)}</b><small>分数只是注脚</small>` : ''}</div>
+    </div>
+    <div class="two sect" id="vzCells"></div>
     ${rotArms.length ? '<div class="sect"><div class="mini-h">修复后 Rotation-6D 正交误差（对数坐标）：解出的分量严格满足单位正交约束</div><div id="vzRot"></div></div>' : ''}`;
   const host = $('#vzCells', viz);
-  comps.slice(0, 6).forEach((f, idx) => {
+  comps.slice(0, 6).forEach((f) => {
     const k = +/\[(\d+)\]/.exec(f)[1];
     const fld = f.split('[')[0] === 'actions' ? 'actions' : 'state';
     const div = document.createElement('div');
-    div.innerHTML = `<div class="mini-h">${esc(label(f))}</div><div></div>`;
+    div.innerHTML = `<div class="mini-h">${esc(cellLabel(f))}</div><div></div>`;
     host.appendChild(div);
     const B = col(raw[fld], k), A = after ? col(after[fld], k) : B;
     const rr = rowsBy[f] || [];
@@ -1428,6 +1814,7 @@ function vizCells(viz, d, title) {
         { name: '修复前', values: B, color: 'var(--ink-3)', width: 3, opacity: 0.8, xmarks: rr.filter((i) => B[i] == null) },
         { name: '修复后', values: A, color: 'var(--fix)', markers: rr, width: 1.5 },
       ],
+      bands: rr.map((r) => ({ from: r, to: r, color: 'var(--fix)', label: `第 ${r} 行` })),
       legendExtra: '<span class="muted">底部刻度 = 原值缺失（NaN）的行；圆点 = 被改写的格</span>',
     });
   });
@@ -1500,7 +1887,7 @@ function initImport() {
   IMP.panel = new RunPanel('import', shell, {
     import: true, kind: 'govern',
     cfg: { name: '导入测试', desc: '', btn: '开始测试', rerun: '开始测试', phases: STAGE_CFG.govern.phases },
-    onStart: impRun, onDone: () => loadHist(), onResult: impExtras,
+    onStart: impRun, onDone: () => loadHist(),
   });
   S.panels.import = IMP.panel;
   $('#impPickFile').addEventListener('click', () => (isMac() ? pickNative('file') : $('#impFileInput').click()));
@@ -1664,24 +2051,362 @@ async function loadHist() {
   }));
 }
 
-function impExtras(res, box) {
+// ------------------------------------------------------------ import result: one story, not a dashboard
+function renderImportResult(res, box, panel) {
   const imp = res.import || {};
-  const extra = document.createElement('div');
-  extra.className = 'imp-extra';
-  const one = res.episodes.length === 1 ? res.episodes[0] : null;
-  const man = one && (res.manifest || []).find((m) => +m.episode_index === one.id);
-  const hasCase = man && (man.kind !== '未修改' || man.rejected);
-  extra.innerHTML = `<div class="panel card"><div class="src-line">
-      <span>测试来源</span><code>${esc(imp.source || imp.input || '')}</code>
-      <span>${imp.kind === 'file' ? '单个文件' : '批量'} · ${imp.repair ? '检测 + 修复' : '只检测'} · ${esc(imp.created || '')}</span>
-      ${one ? `<button class="ghost sm" data-one="ep">查看这条轨迹的画面与问题区间</button>` : ''}
-      ${hasCase ? `<button class="ghost sm" data-one="case">查看修复前后</button>` : ''}
-    </div></div>
-    ${res.kind === 'govern' ? '<div class="imp-notes"></div>' : ''}`;
-  box.appendChild(extra);
-  $('[data-one=ep]', extra)?.addEventListener('click', () => openEpisode(res.stage, one.id));
-  $('[data-one=case]', extra)?.addEventListener('click', () => openCaseModal(res.stage, one.id));
-  if (res.kind === 'govern') renderRepairNotes(res.stage, $('.imp-notes', extra), (ep) => openCaseModal(res.stage, ep));
+  const eps = res.episodes || [];
+  S.impStoryToken = (S.impStoryToken || 0) + 1;
+  if (!eps.length) {
+    box.innerHTML = `<div class="panel empty"><h3>没有读到可分析的轨迹</h3><p>检查路径或换一个 Parquet 文件再试。</p></div>`;
+    return;
+  }
+  if (eps.length === 1) renderImportStory(res, box, eps[0], imp, S.impStoryToken);
+  else renderImportBatch(res, box, imp);
+}
+
+function importType(d, e) {
+  const m = d.manifest || {};
+  const fixed = m.kind && m.kind !== '未修改';
+  const text = fixed ? (m.applied || '') : (m.rejected || '');
+  const shift = shiftFromText(text);
+  if (shift) return fixed ? 'shift-fixed' : 'shift-refused';
+  if (fixed && m.kind === '仅元数据补丁') return 'meta';
+  if (fixed) return 'cells';
+  if (m.rejected) return 'refused';
+  return 'clean';
+}
+
+function cellLabel(f) {
+  const k = +/\[(\d+)\]/.exec(f)[1];
+  const arm = k < 10 ? '左臂' : '右臂', j = k % 10;
+  const part = j < 3 ? `末端位置 ${'xyz'[j]}` : j < 9 ? `Rotation-6D 第 ${j - 2} 分量` : '夹爪';
+  return `${f.split('[')[0]}[${k}] ${arm}${part}`;
+}
+
+function storyStrip(d, n, keep) {
+  const mask = d.mask || [];
+  let cells = '';
+  for (let i = 0; i < n; i++) {
+    const m = mask[i];
+    let cls = 'x', label = '阻断 / 缺图';
+    if (m) {
+      if (m.keep) { cls = m.est ? 'r' : 'k'; label = m.est ? '修复后进入训练' : '进入训练'; }
+      else if (m.valid) { cls = 'v'; label = '有效但未成段'; }
+    } else {
+      cls = i < keep ? 'k' : 'x';
+    }
+    cells += `<i class="${cls}" title="第 ${i} 行 · ${label}"></i>`;
+  }
+  return `<div class="story-strip" aria-hidden="true">${cells}</div>`;
+}
+
+function importCellChart(host, d, audit) {
+  const comps = [...new Set(audit.map((a) => a.field))].filter((f) => /^state\[\d+\]$|^actions\[\d+\]$/.test(f)).slice(0, 4);
+  if (!comps.length) {
+    host.innerHTML = '<p class="muted" style="padding:18px 0">这条修复不涉及 state / actions 曲线：只改标签或存储类型，其余数值逐位不变。</p>';
+    return;
+  }
+  const rowsBy = {};
+  for (const a of audit) (rowsBy[a.field] = rowsBy[a.field] || []).push(+a.row);
+  host.innerHTML = `<div class="cell-charts">${comps.map((f) => `<div><div class="mini-h">${esc(cellLabel(f))}</div><div class="cc" data-f="${esc(f)}"></div></div>`).join('')}</div>`;
+  for (const f of comps) {
+    const k = +/\[(\d+)\]/.exec(f)[1];
+    const fld = f.split('[')[0] === 'actions' ? 'actions' : 'state';
+    const B = col(d.raw[fld], k), A = d.after ? col(d.after[fld], k) : B;
+    const rr = [...new Set(rowsBy[f] || [])];
+    const miss = rr.filter((i) => B[i] == null);
+    lineChart($(`.cc[data-f="${CSS.escape(f)}"]`, host), {
+      n: d.raw.n, height: 150,
+      series: [
+        { name: '修复前', values: B, color: 'var(--ink-3)', width: 3, opacity: 0.8, xmarks: miss },
+        { name: '修复后', values: A, color: 'var(--fix)', markers: rr, width: 1.6 },
+      ],
+      bands: rr.map((r) => ({ from: r, to: r, color: 'var(--fix)', label: `第 ${r} 行` })),
+      legendExtra: '<span class="muted">底部刻度 = 原值缺失的行；圆点 = 实际改写的格</span>',
+    });
+  }
+}
+
+async function renderImportStory(res, box, e, imp, token) {
+  if (S.impTimer) { clearInterval(S.impTimer); S.impTimer = null; }
+  box.innerHTML = `<div class="story">
+    <div class="story-head panel">
+      <div class="story-kicker">导入测试 · 单条轨迹 · ${esc(imp.created || '')}</div>
+      <h2>${epName(e.id)}<span>${fmt(e.rows)} 帧${imp.name ? ' · ' + esc(imp.name) : ''}</span></h2>
+      <p class="story-src">${esc(imp.source || imp.input || '')}</p>
+    </div>
+    <div class="panel card story-loading"><span class="spin"></span> 读取三路画面与逐帧定位…</div>
+  </div>`;
+  const d = await api(`/api/episode?stage=${res.stage}&ep=${e.id}`);
+  if (token != null && token !== S.impStoryToken) return;
+  if (!d.ok || !d.raw?.ok || !d.raw.n) {
+    box.innerHTML = `<div class="story"><div class="panel empty"><h3>${epName(e.id)} 原始文件读不出画面</h3><p>${esc(d.error || d.raw?.error || '没有数据行')}</p></div></div>`;
+    return;
+  }
+  const raw = d.raw, after = d.after, n = raw.n;
+  const m = d.manifest || {};
+  const fixed = m.kind && m.kind !== '未修改';
+  const audit = d.audit || [];
+  const codes = e.codes || [];
+  const detectOnly = imp.repair === false;
+  const text = fixed ? (m.applied || '') : (m.rejected || '');
+  const cov = String(d.report?.sync_evidence_index_coverage || '');
+  const cm = /(image|left_wrist_image|right_wrist_image):path偏移([+-]?\d+)/.exec(cov);
+  const shift = shiftFromText(text) || (detectOnly && cm ? { cam: cm[1], frames: +cm[2] } : null);
+  const rr = crossR(text);
+  const arm = armR(text);
+  const keep = Math.max(0, Math.min(n, e.train_frames || 0));
+  let type = importType(d, e);
+  if (detectOnly) type = 'detect-only';
+  if (type === 'cells' && !audit.length) type = 'fixed';
+  const camCn = shift ? (CAM_CN[shift.cam] || shift.cam) : '';
+  const off = shift?.frames ?? 0;
+  const ints = d.intervals || [];
+  let problem = '', action = '', evidence = [];
+  if (type === 'shift-fixed') {
+    const moved = (after?.paths?.[shift.cam] || []).filter(Boolean).length;
+    const blank = n - moved;
+    problem = `同一行里，${camCn}的画面和机械臂状态差了 ${Math.abs(off)} 帧：夹爪闭合的瞬间对不上。`;
+    action = `移回 ${fmt(moved)} 帧画面；开头 ${fmt(blank)} 帧相机没拍到，显式置空，不合成任何画面。`;
+    evidence = [
+      ['path 偏移', `${signed(off)} 帧，整条恒定`, true],
+      ['跨相机相关', `r = ${rr == null ? '—' : rr.toFixed(2)} ≥ 0.80`, rr != null && rr >= 0.8],
+      ['对端缺图', `${Math.abs(off)} 帧，正好对上`, true],
+    ];
+  } else if (type === 'shift-refused') {
+    problem = `${camCn}的画面疑似整体错了 ${Math.abs(off)} 帧，但画面内容没有给出足够的对应证据。`;
+    action = '没修。整条保持原样隔离，不让伪同步画面进入训练。';
+    evidence = [
+      ['path 偏移', `${signed(off)} 帧（只是索引，不是内容证据）`, null],
+      ['跨相机相关', `r = ${rr == null ? '—' : rr.toFixed(2)} < 0.80`, false],
+      ...(arm != null ? [['本臂相关', `r = ${arm.toFixed(2)} < 0.60`, arm >= 0.6]] : []),
+    ];
+  } else if (type === 'detect-only') {
+    if (!codes.length && !shift) {
+      problem = '这条数据没有检测到阻断问题。';
+      action = '本次只检测；没有需要修复的地方，整条可进入训练。';
+      evidence = [['检测结果', '未命中阻断问题', true]];
+    } else {
+      problem = shift
+        ? `同一行里，${camCn}的画面和机械臂状态差了 ${Math.abs(off)} 帧。`
+        : `${codeLine({ flagged: e.flagged_frames, rows: n }, codes)}。`;
+      action = '本次选择只检测，没有生成修复副本；问题段不进入训练。';
+      evidence = [
+        ['检测结论', codes.length ? codes.join('、') : '未命中阻断问题', !codes.length],
+        ['修复', '未执行（只检测）', null],
+        ...(shift ? [['path 偏移', `${signed(off)} 帧`, true]] : []),
+      ];
+    }
+  } else if (type === 'cells') {
+    const rows = [...new Set(audit.map((a) => +a.row))];
+    const isVec = audit.some((a) => /^(state|actions)\[/.test(a.field));
+    const dims = (raw.state?.[0]?.length || 20) + (raw.actions?.[0]?.length || 20);
+    const unchanged = isVec ? n * dims - audit.length : null;
+    if (codes.includes('J_STATE_NONFINITE')) {
+      problem = `state 里有 ${fmt(audit.length)} 个空值（NaN/Inf）。这些格直接进训练会让损失变成 NaN。`;
+      action = `只补这 ${fmt(audit.length)} 格：Rotation-6D 按正交约束解出，其余分量逐位不变。`;
+    } else if (codes.includes('J_POSITION_ENVELOPE')) {
+      problem = `末端位置有 ${fmt(audit.length)} 个孤立越界值。`;
+      action = '只把越界分量改成前后帧均值；其余分量逐位不变。';
+    } else if (codes.some((c) => /^S_TASK/.test(c))) {
+      problem = '任务标签和元数据登记的不一致。';
+      action = '整条统一为元数据登记的任务，只改 task_index 这一列；画面、动作、时间戳不动。';
+    } else if (codes.includes('C_SCHEMA_DTYPE_MISMATCH')) {
+      problem = '字段存储类型和 info.json 声明不符。';
+      action = '按声明做无损转换，每个数值逐位不变。';
+    } else {
+      problem = `检测到 ${codes.length} 类可以安全修复的问题。`;
+      action = fixLabel(m) || m.applied || '只改写检测到的单元格，其余逐位不变。';
+    }
+    evidence = [
+      ['改写', `${fmt(audit.length)} 格（${runsText(rows)}）`, true],
+      ['写后核验', '逐格回读一致', true],
+      ...(unchanged != null ? [['没有动的格', `${fmt(unchanged)} 格逐位不变`, true]] : []),
+    ];
+  } else if (type === 'fixed') {
+    problem = `检测到 ${codes.length || 1} 类问题，可以直接修复。`;
+    action = fixLabel(m) || m.applied || '按审计记录逐格改写。';
+    evidence = [['处理方式', m.applied || '', true]];
+  } else if (type === 'meta') {
+    problem = 'episodes.jsonl 记录的长度和实际行数不一致。';
+    action = '只更新元数据记录，Parquet 文件不改。';
+    evidence = [
+      ['实际行数', `${fmt(n)} 行`, true],
+      ['Parquet', '未改动', true],
+    ];
+  } else if (type === 'refused') {
+    problem = `检测到问题，但证据不足：${reasonLabel((m.rejected || '').split('；')[0])}。`;
+    action = '没修。问题段不进入训练，整条交由人工复核或隔离回采。';
+    evidence = splitClausesJs(m.rejected || '').slice(0, 4).map((s) => [reasonLabel(s), s.slice(0, 140), null]);
+  } else {
+    problem = '这条数据没有检测到阻断问题。';
+    action = '不需要修复，整条进入训练。';
+    evidence = [['检测结果', '未命中阻断问题', true]];
+  }
+  let row = Math.min(n - 1, 25);
+  if (shift) row = Math.min(n - 1, Math.max(25, Math.abs(off) + 20));
+  else if (audit.length) row = Math.min(n - 1, Math.max(0, +audit[0].row));
+  else if (ints.length) row = Math.min(n - 1, Math.max(0, +ints[0].start_row));
+  const camFig = (c) => `<figure class="story-cam ${c === shift?.cam ? 'affected' : ''}" data-cam="${c}"><img alt=""><figcaption>${CAM_CN[c]}<em class="frame-no">—</em></figcaption></figure>`;
+  const intervalHtml = ints.length ? `<div class="story-intervals">${ints.slice(0, 6).map((it) => `<div class="si"><span>${esc(it.issue_code)}</span><div class="si-bar"><i style="left:${(+it.start_row / n) * 100}%;width:${Math.max(((+it.end_row - +it.start_row + 1) / n) * 100, 1)}%;background:var(${CAT_VAR[catOf(it.issue_code)]})"></i></div><b>第 ${it.start_row}–${it.end_row} 行</b></div>`).join('')}</div>` : '';
+  const evHtml = evidence.map(([k, v, pass]) => `<div class="story-ev ${pass === true ? 'pass' : pass === false ? 'fail' : ''}"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('');
+  const notKeep = n - keep;
+  let keepText;
+  if (keep === n) keepText = `全部 ${fmt(n)} 帧都能进入训练。`;
+  else if (keep === 0) keepText = '0 帧进入训练；整条交给人工复核或隔离回采。';
+  else if (type === 'shift-fixed') keepText = `开头 ${fmt(n - keep)} 帧修复后没有画面，不进入训练；其余 ${fmt(keep)} 帧全部可用。`;
+  else keepText = `${fmt(notKeep)} 帧不进入训练：复检后仍有阻断问题，或不足 30 帧连续。`;
+  const sb = m.score_before != null ? +m.score_before : e.score;
+  const sa = m.score_after != null ? +m.score_after : e.final_score;
+  const scoreTxt = detectOnly ? `检测评分 ${fmt(sb, 2)} 分 · 未修复` : fixed ? `复检 ${fmt(sb, 2)} → <b>${fmt(sa, 2)}</b> 分` : `复检 ${fmt(sb, 2)} 分 · 保持原样`;
+  box.innerHTML = `<div class="story">
+    <header class="story-head panel">
+      <div class="story-kicker">导入测试 · 单条轨迹 · ${esc(imp.created || '')}</div>
+      <h2>${epName(e.id)}<span>${fmt(n)} 帧 · ${fmt(ints.length || (codes.length ? 1 : 0))} 段问题</span></h2>
+      <p class="story-src">${esc(imp.source || imp.input || '')}</p>
+      <div class="story-head-right"><span class="badge ${e.final_status === '通过' ? 'b-ok' : e.final_status === '价值提示' ? 'b-hint' : 'b-bad'}"><i></i>${esc(e.final_status || e.status || '')}</span><span class="badge">${esc(e.policy || '')}</span></div>
+    </header>
+    <section class="story-sec panel">
+      <div class="story-rail">01</div>
+      <div class="story-content">
+        <h3>这条数据有什么病</h3>
+        <p class="story-lead">${esc(problem)}</p>
+        <div class="story-cams">${CAMS.map(camFig).join('')}</div>
+        <div class="story-scrub"><button class="ghost sm" id="impPlay">▶ 播放</button><input type="range" id="impRow" min="0" max="${n - 1}" value="${row}"><span class="rowlab" id="impRowLab"></span></div>
+        <p class="story-note" id="impCamNote"></p>
+        ${intervalHtml}
+      </div>
+    </section>
+    <section class="story-sec panel">
+      <div class="story-rail">02</div>
+      <div class="story-content">
+        <h3>修了，还是没修？</h3>
+        <p class="story-verdict ${fixed ? 'fixed' : 'refused'}">${esc(action)}</p>
+        ${type === 'shift-fixed' ? `<div class="sameframe">
+          <figure class="sameframe-item"><img data-side="raw" alt=""><figcaption>修复前 · 第 <em class="frame-no">—</em> 帧</figcaption></figure>
+          <div class="sameframe-arrow">移回 ${Math.abs(off)} 帧<br><span>同一行 →</span></div>
+          <figure class="sameframe-item"><img data-side="after" alt=""><figcaption>修复后 · 第 <em class="frame-no">—</em> 帧</figcaption></figure>
+        </div>` : (type === 'shift-refused' || (type === 'detect-only' && shift)) ? `<div class="sameframe one">
+          <figure class="sameframe-item"><img data-side="raw" alt=""><figcaption>仍保持原样 · 第 <em class="frame-no">—</em> 帧</figcaption></figure>
+          <div class="refuse-body"><div class="refuse-stamp">${type === 'detect-only' ? '只检测' : '没修'}</div><p>${type === 'detect-only' ? '没有生成修复副本。' : '证据不足，不移动画面。'}</p></div>
+        </div>` : ''}
+        ${type === 'cells' ? '<div class="cell-proof"><div id="impCells"></div><div class="cell-facts"><b>' + fmt(audit.length) + '</b><span>格改写</span><small>圆点与竖线 = 实际改写的格；其余曲线逐位不变</small></div></div>' : ''}
+        <div class="story-evs">${evHtml}</div>
+      </div>
+    </section>
+    <section class="story-sec panel">
+      <div class="story-rail">03</div>
+      <div class="story-content">
+        <h3>修了哪几帧，还剩多少帧能训练</h3>
+        <div class="story-keep">
+          <div class="keep-big"><b>${fmt(keep)}</b><span>/ ${fmt(n)} 帧可训练</span></div>
+          <p>${esc(keepText)}</p>
+        </div>
+        ${storyStrip(d, n, keep)}
+        <div class="story-legend"><span><i class="k"></i>进入训练</span><span><i class="r"></i>修复后进入训练</span><span><i class="v"></i>有效但未成段</span><span><i class="x"></i>阻断 / 缺图</span></div>
+        <div class="story-facts"><span>${scoreTxt}</span><span>改写 ${fmt(audit.length)} 格</span><span>处理 ${fmt(e.seconds, 2)} 秒</span><span>${esc(e.policy || '')}</span></div>
+        <div class="story-actions">
+          ${audit.length ? '<button class="ghost sm" data-preview="governed/repair_audit.csv">查看逐格审计</button>' : ''}
+          <button class="ghost sm" data-full="ep">查看完整轨迹（三路相机 + 信号曲线）</button>
+        </div>
+      </div>
+    </section>
+  </div>`;
+  if (type === 'cells') importCellChart($('#impCells', box), d, audit);
+  const setRow = (i) => {
+    i = Math.max(0, Math.min(n - 1, i));
+    $('#impRow', box).value = i;
+    $$('.story-cam', box).forEach((fig) => {
+      const cam = fig.dataset.cam, p = raw.paths?.[cam]?.[i];
+      const img = $('img', fig);
+      if (!p) { img.removeAttribute('src'); img.style.visibility = 'hidden'; }
+      else { img.style.visibility = ''; img.src = `/api/frame?stage=${res.stage}&ep=${e.id}&row=${i}&cam=${cam}&src=raw`; }
+      $('.frame-no', fig).textContent = p ? '第 ' + pathNum(p) + ' 帧' : '缺图';
+    });
+    if (type === 'shift-fixed') {
+      const rfig = $('.sameframe-item img[data-side=raw]', box);
+      const afig = $('.sameframe-item img[data-side=after]', box);
+      const pr = raw.paths?.[shift.cam]?.[i], pa = after?.paths?.[shift.cam]?.[i];
+      if (pr) rfig.src = `/api/frame?stage=${res.stage}&ep=${e.id}&row=${i}&cam=${shift.cam}&src=raw`;
+      else { rfig.removeAttribute('src'); rfig.style.visibility = 'hidden'; }
+      if (pa) { afig.style.visibility = ''; afig.src = `/api/frame?stage=${res.stage}&ep=${e.id}&row=${i}&cam=${shift.cam}&src=after`; }
+      else { afig.removeAttribute('src'); afig.style.visibility = 'hidden'; }
+      $('.sameframe-item img[data-side=raw]', box).parentElement.querySelector('.frame-no').textContent = pr ? pathNum(pr) : '缺图';
+      $('.sameframe-item img[data-side=after]', box).parentElement.querySelector('.frame-no').textContent = pa ? pathNum(pa) : '缺图';
+    }
+    if (type === 'shift-refused' || (type === 'detect-only' && shift)) {
+      const rfig = $('.sameframe-item img[data-side=raw]', box);
+      const pr = raw.paths?.[shift.cam]?.[i];
+      if (pr) rfig.src = `/api/frame?stage=${res.stage}&ep=${e.id}&row=${i}&cam=${shift.cam}&src=raw`;
+      $('.sameframe-item .frame-no', box).textContent = pr ? pathNum(pr) : '—';
+    }
+    $('#impRowLab', box).textContent = `第 ${i} 行 · frame ${raw.frame_index?.[i] ?? '—'}`;
+    $('#impCamNote', box).textContent = shift
+      ? `橙色框 = ${CAM_CN[shift.cam]}。修复前这一行显示第 ${raw.paths?.[shift.cam]?.[i] ? pathNum(raw.paths[shift.cam][i]) : '—'} 帧${fixed ? '，修复后回到第 ' + (after?.paths?.[shift.cam]?.[i] ? pathNum(after.paths[shift.cam][i]) : '缺图') + ' 帧' : ''}。`
+      : '三路相机取自同一数据行；拖动游标看问题发生的前后。';
+  };
+  const play = $('#impPlay', box);
+  const stop = () => { if (S.impTimer) clearInterval(S.impTimer); S.impTimer = null; play.textContent = '▶ 播放'; };
+  play.addEventListener('click', () => {
+    if (S.impTimer) return stop();
+    let i = +$('#impRow', box).value;
+    if (i >= n - 1) i = 0;
+    play.textContent = '❚❚ 暂停';
+    S.impTimer = setInterval(() => { i += 1; if (i >= n) return stop(); setRow(i); }, 1000 / (S.info.dataset.fps || 10));
+  });
+  $('#impRow', box).addEventListener('input', (ev) => { stop(); setRow(+ev.target.value); });
+  $$('[data-preview]', box).forEach((b) => b.addEventListener('click', () => previewFile(res.stage, b.dataset.preview)));
+  $$('[data-full]', box).forEach((b) => b.addEventListener('click', () => openEpisode(res.stage, e.id, row)));
+  setRow(row);
+}
+
+function renderImportBatch(res, box, imp) {
+  const eps = res.episodes || [];
+  const man = res.manifest || [];
+  const flagged = eps.filter((e) => (e.codes || []).length || e.rejected);
+  const fixed = eps.filter((e) => e.repaired || man.some((m) => +m.episode_index === e.id && m.kind && m.kind !== '未修改'));
+  const keep = eps.reduce((s, e) => s + (e.train_frames || 0), 0);
+  const rows = eps.reduce((s, e) => s + (e.rows || 0), 0);
+  const desc = (e) => {
+    const m = man.find((x) => +x.episode_index === e.id);
+    if (m) {
+      if (m.kind !== '未修改') return fixLabel(m);
+      if (m.rejected) return reasonLabel(m.rejected.split('；')[0]);
+    }
+    if (!(e.codes || []).length) return '未命中阻断问题';
+    return codeLine({ flagged: e.flagged_frames, rows: e.rows }, e.codes);
+  };
+  box.innerHTML = `<div class="story">
+    <header class="story-head panel">
+      <div class="story-kicker">导入测试 · 文件夹 · ${esc(imp.created || '')}</div>
+      <h2>${fmt(eps.length)} 条轨迹里，${fmt(flagged.length)} 条查出了问题；修了 ${fmt(fixed.length)} 条。</h2>
+      <p class="story-lead">最终 ${fmt(keep)} / ${fmt(rows)} 帧可训练。下面每条轨迹一句话；点开看三路画面、问题区间和修复前后。</p>
+      <p class="story-src">${esc(imp.source || imp.input || '')}</p>
+    </header>
+    <div class="batch-list">${eps.map((e) => {
+      const m = man.find((x) => +x.episode_index === e.id);
+      const cells = m?.values_changed || m?.audit_count || '';
+      return `<button class="batch-case panel" data-ep="${e.id}">
+        <div class="bc-head"><b>${epName(e.id)}</b><span class="badge ${e.final_status === '通过' ? 'b-ok' : 'b-bad'}"><i></i>${esc(e.final_status || e.status)}</span><span class="bc-keep">${fmt(e.train_frames)} / ${fmt(e.rows)} 帧可训练</span></div>
+        <p>${esc(desc(e))}</p>
+        <small>${esc(e.policy || '')}${cells ? ` · 改写 ${fmt(cells)} 格` : ''} · 复检 ${fmt(e.score, 2)} → ${fmt(e.final_score, 2)} 分</small>
+      </button>`;
+    }).join('')}</div>
+  </div>`;
+  $$('.batch-case', box).forEach((b) => b.addEventListener('click', () => openEpisode(res.stage, +b.dataset.ep)));
+}
+
+function splitClausesJs(text) {
+  const out = [];
+  let depth = 0, cur = '';
+  for (const ch of String(text || '')) {
+    if (ch === '（' || ch === '(') depth++;
+    if (ch === '）' || ch === ')') depth = Math.max(0, depth - 1);
+    if (ch === '；' && depth === 0) { if (cur.trim()) out.push(cur.trim()); cur = ''; }
+    else cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
 }
 
 // ------------------------------------------------------------ boot

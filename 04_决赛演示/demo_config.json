@@ -28,5 +28,9 @@
   "hero": {
     "episode": 6,
     "row": 80
+  },
+  "compare_pair": {
+    "fixed": 29,
+    "refused": 74
   }
 }

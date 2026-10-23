@@ -16,9 +16,33 @@ import argparse
 import json
 import os
 import platform
+import re
 import sys
 import time
 import traceback
+
+
+def brief(orig: dict, repair: dict) -> dict:
+    """给页面实时字幕用的一句话证据：哪路相机偏了几帧、修了还是拒修。"""
+    met = orig.get("metrics") or {}
+    out = {}
+    m = re.search(r"(image|left_wrist_image|right_wrist_image):path偏移([+-]?\d+)",
+                  str(met.get("sync_evidence_index_coverage") or ""))
+    if m:
+        out["shift"] = {"cam": m.group(1), "frames": int(m.group(2))}
+    else:
+        for cam, st in (met.get("streams") or {}).items():
+            if isinstance(st, dict) and st.get("shift_frames"):
+                out["shift"] = {"cam": cam, "frames": int(st["shift_frames"])}
+                break
+    lag = str(met.get("sync_evidence_statistical_lag") or "")
+    if lag:
+        out["lag"] = lag[:300]
+    if repair.get("applied"):
+        out["applied"] = "；".join(repair["applied"])[:400]
+    if repair.get("rejected"):
+        out["rejected"] = "；".join(repair["rejected"])[:600]
+    return out
 
 
 def main() -> int:
@@ -67,6 +91,7 @@ def main() -> int:
              codes=o["codes"], final_codes=fin["codes"],
              repaired=bool(r.get("repaired_rel_path")), meta_patch=bool(rep.get("meta_patch")),
              cells=len(rep.get("audit", [])), rejected=len(rep.get("rejected", [])),
+             brief=brief(o, rep),
              flagged=sum(1 for x in o.get("row_codes", []) if x),
              error=bool(r.get("error")), images_total=counter["images"], rows_total=counter["rows"])
 

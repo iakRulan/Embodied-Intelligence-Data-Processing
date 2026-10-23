@@ -272,6 +272,24 @@ def run_live(job: Job) -> None:
         job.finish(False)
 
 
+def replay_brief(stage: str, ep: int) -> dict:
+    """回放记录里没有实时 brief 时，从已写出的报告里补同一句话。"""
+    r = episode_rows(stage).get(ep) or {}
+    out = {}
+    m = re.search(r"(image|left_wrist_image|right_wrist_image):path偏移([+-]?\d+)",
+                  str(r.get("sync_evidence_index_coverage") or ""))
+    if m:
+        out["shift"] = {"cam": m.group(1), "frames": int(m.group(2))}
+    lag = str(r.get("sync_evidence_statistical_lag") or "")
+    if lag:
+        out["lag"] = lag[:300]
+    if r.get("repair_applied"):
+        out["applied"] = str(r["repair_applied"])[:400]
+    if r.get("repair_rejected"):
+        out["rejected"] = str(r["repair_rejected"])[:600]
+    return out
+
+
 def run_replay(job: Job, speed: float = 1.0) -> None:
     src = stage_dir(job.stage) / "demo_events.jsonl"
     try:
@@ -280,6 +298,12 @@ def run_replay(job: Job, speed: float = 1.0) -> None:
         job.push({"type": "error", "msg": "没有可回放的运行记录：请先实时运行一次"})
         job.finish(False)
         return
+    for ev in events:
+        if ev.get("type") == "episode" and not ev.get("brief"):
+            try:
+                ev["brief"] = replay_brief(job.stage, int(ev["ep"]))
+            except (KeyError, TypeError, ValueError):
+                pass
     job.push({"type": "replay", "msg": "回放上一次实测记录（按原始时间节奏）", "recorded": time.strftime(
         "%Y-%m-%d %H:%M", time.localtime(src.stat().st_mtime))})
     t0 = time.perf_counter()
@@ -391,6 +415,7 @@ def api_info() -> dict:
         "operator_dir": str(OPERATOR),
         "team": CFG.get("team"),
         "hero": CFG.get("hero", {"episode": 6, "row": 80}),
+        "compare_pair": CFG.get("compare_pair", {}),
     })
 
 
