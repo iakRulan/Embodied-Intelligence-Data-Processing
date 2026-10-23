@@ -152,6 +152,14 @@ const STAGE_CFG = {
   },
 };
 
+// 实时面板：左边计时与阶段；右边是逐帧全景（每完成一条轨迹，铺开一行）和逐条发现流
+const LIVE_LEGEND = {
+  detect: () => CATS.map((c) => [`var(${CAT_VAR[c]})`, c]).concat([['var(--cell)', '未命中'], ['var(--cell-empty)', '待检测']]),
+  govern: () => [['var(--fix)', '本行被修复改写']].concat(CATS.map((c) => [`var(${CAT_VAR[c]})`, `复检仍有：${c}`]), [['var(--cell)', '干净'], ['var(--cell-empty)', '待处理']]),
+};
+const bitsOf = (s) => { const o = {}; for (const ch of s || '') { const b = parseInt(ch, 16) || 0; for (const c of CATS) if (b & CAT_BIT[c]) o[c] = (o[c] || 0) + 1; } return o; };
+const runsToSet = (runs) => { const s = new Set(); for (const [a, b] of runs || []) for (let i = +a; i <= +b; i++) s.add(i); return s; };
+
 class RunPanel {
   constructor(stage, host, opts = {}) {
     this.stage = stage;
@@ -166,17 +174,17 @@ class RunPanel {
     this.btn = $('.run-btn', host);
     this.btn.textContent = this.cfg.btn;
     this.btn.addEventListener('click', () => this.start());
-    $('.tiles-legend', host).innerHTML = [['--ok', '通过'], ['--warn', '仅价值提示'], ['--bad', '需复核'], ['--cell-empty', '待处理']]
-      .map(([v, l]) => `<span><i style="background:var(${v});border:1px solid var(--line-2)"></i>${l}</span>`).join('')
-      + (this.kind === 'govern' || opts.import ? '<span><i class="dot" style="background:var(--fix)"></i>已生成修复副本</span>' : '');
-    this.setPhases(this.cfg.phases);
+    this.canvas = $('canvas[data-live]', host);
+    this.bindCanvas();
+    this.setKind(this.kind);
     this.raf = null;
     if (opts.import) {
       host.classList.add('imp-panel');
-      this.buildTiles([]);
+      this.buildRows([]);
       return;
     }
-    this.buildTiles(Math.max(S.info.dataset.episodes_files || 0, S.info.dataset.meta_episodes || 0) || 89);
+    const n = Math.max(S.info.dataset.episodes_files || 0, S.info.dataset.meta_episodes || 0) || 89;
+    this.buildRows(Array.from({ length: n }, (_, i) => i));
     const brief = S.info.runs[stage];
     if (brief) {
       const a = document.createElement('button');
@@ -188,22 +196,118 @@ class RunPanel {
     }
   }
 
+  setKind(kind) {
+    this.kind = kind;
+    this.setPhases((STAGE_CFG[kind] || this.cfg).phases);
+    $('.bh-title', this.el).textContent = kind === 'govern' ? '逐帧修复全景' : '逐帧检测全景';
+    $('.bh-sub', this.el).textContent = kind === 'govern'
+      ? '每行一条轨迹、每格一帧：紫色是被修复改写的行，彩色是复检后仍有问题的行'
+      : '每行一条轨迹、每格一帧：一条轨迹查完，它的那一行就铺开，颜色是问题类别';
+    $('.live-legend', this.el).innerHTML = LIVE_LEGEND[kind === 'govern' ? 'govern' : 'detect']()
+      .map(([c, l]) => `<span><i style="background:${c};border:1px solid var(--line-2)"></i>${l}</span>`).join('');
+    $('.feed-h', this.el).textContent = kind === 'govern' ? '逐条修复' : '逐条发现';
+  }
+
   setPhases(phases) {
     $('.phases', this.el).innerHTML = phases.map(([k, l]) => `<li data-k="${k}"><span>${l}</span><span></span></li>`).join('');
   }
 
-  buildTiles(n) {
-    const ids = Array.isArray(n) ? n : Array.from({ length: n }, (_, i) => i);
-    this.n = ids.length;
-    $('.pn', this.el).textContent = ids.length;
-    $('.board-head h3', this.el).textContent = `${ids.length} 条轨迹处理状态`;
-    $('.tiles', this.el).classList.toggle('few', ids.length <= 6);
-    $('.tiles', this.el).innerHTML = ids.map((i) => `<div class="tile" data-ep="${i}">${i}</div>`).join('');
-    $$('.tile', this.el).forEach((t) => {
-      t.addEventListener('mousemove', (e) => { if (t._tip) showTip(t._tip, e.clientX, e.clientY); });
-      t.addEventListener('mouseleave', hideTip);
-      t.addEventListener('click', () => { if (this.state === 'done') openEpisode(this.stage, +t.dataset.ep); });
+  buildRows(ids) {
+    this.ids = [...ids];
+    this.n = this.ids.length;
+    this.rows = {};
+    this.lastEp = null;
+    $('.pn', this.el).textContent = this.n;
+    this.drawLive();
+  }
+
+  bindCanvas() {
+    const c = this.canvas;
+    const hit = (ev) => {
+      const g = c._geo;
+      if (!g) return null;
+      const r = c.getBoundingClientRect();
+      const i = Math.floor((ev.clientY - r.top - 2) / (g.rowH + g.gap));
+      const ep = this.ids[i];
+      return ep == null ? null : { ep, row: this.rows[ep] };
+    };
+    c.addEventListener('mousemove', (ev) => {
+      const h = hit(ev);
+      if (!h || !h.row) return hideTip();
+      const R = h.row;
+      const codes = (this.kind === 'govern' ? R.final_codes : R.codes) || [];
+      showTip(`<b>${epName(h.ep)}</b> · ${esc(this.kind === 'govern' ? R.final_status : R.status)} · ${fmt(R.rows)} 行`
+        + (this.kind === 'govern' && R.fix.size ? ` · 改写 ${fmt(R.fix.size)} 行` : '')
+        + '<br>' + (codes.length ? codes.map((x) => `<div class="tt-row"><i style="background:var(${CAT_VAR[catOf(x)]})"></i>${esc(x)}</div>`).join('') : '未命中问题码'), ev.clientX, ev.clientY);
     });
+    c.addEventListener('mouseleave', hideTip);
+    c.addEventListener('click', (ev) => { const h = hit(ev); if (h && h.row && this.state === 'done') openEpisode(this.stage, h.ep); });
+    new ResizeObserver(() => this.drawLive()).observe(c.parentElement);
+  }
+
+  drawLive() {
+    const c = this.canvas;
+    if (!c || !c.parentElement) return;
+    const n = this.ids.length;
+    const W = c.parentElement.clientWidth || 700;
+    const rowH = n <= 3 ? 30 : n <= 12 ? 16 : n <= 40 ? 12 : 5, gap = n <= 12 ? 4 : 1, gutter = 44;
+    const H = Math.max(n, 1) * (rowH + gap) + 4;
+    const dpr = devicePixelRatio || 1;
+    c.width = W * dpr; c.height = H * dpr; c.style.height = H + 'px';
+    const ctx = c.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    const done = Object.values(this.rows);
+    const maxRows = Math.max(240, ...done.map((r) => r.rows || 0));
+    const cw = (W - gutter - 4) / maxRows;
+    const col = { cell: cssv('--cell'), empty: cssv('--cell-empty'), ink: cssv('--ink'), ink3: cssv('--ink-3'), fix: cssv('--fix'), bad: cssv('--bad'), ok: cssv('--ok'), warn: cssv('--warn') };
+    const catCol = CATS.map((x) => cssv(CAT_VAR[x]));
+    const stCol = { 通过: col.ok, 价值提示: col.warn, 需复核: col.bad };
+    ctx.font = '10px ' + cssv('--font');
+    ctx.textBaseline = 'middle';
+    this.ids.forEach((ep, i) => {
+      const y = i * (rowH + gap) + 2;
+      const R = this.rows[ep];
+      if (n <= 40 || ep % 10 === 0) { ctx.fillStyle = col.ink3; ctx.fillText(epName(ep), 0, y + rowH / 2); }
+      if (!R) {
+        ctx.fillStyle = col.empty;
+        ctx.fillRect(gutter, y, W - gutter - 4, rowH);
+        return;
+      }
+      ctx.fillStyle = stCol[this.kind === 'govern' ? R.final_status : R.status] || col.bad;
+      ctx.fillRect(gutter - 6, y, 3, rowH);
+      if (ep === this.lastEp && this.state === 'running') {
+        ctx.fillStyle = col.ink; ctx.globalAlpha = 0.14;
+        ctx.fillRect(gutter - 2, y - 1, W - gutter, rowH + 2);
+        ctx.globalAlpha = 1;
+      }
+      const s = this.kind === 'govern' ? (R.fmask || R.mask) : R.mask;
+      if (!s.length) {
+        ctx.fillStyle = col.bad; ctx.globalAlpha = 0.35;
+        for (let x = gutter; x < W - 4; x += 6) ctx.fillRect(x, y, 3, rowH);
+        ctx.globalAlpha = 1;
+        return;
+      }
+      const tint = R.epbits;
+      for (let r = 0; r < s.length; r++) {
+        let fill, alpha = 1;
+        if (this.kind === 'govern' && R.fix.has(r)) fill = col.fix;
+        else {
+          const b = parseInt(s[r], 16) || 0;
+          if (b) fill = catCol[[1, 2, 4, 8].findIndex((m) => b & m)];
+          else if (tint) { fill = catCol[[1, 2, 4, 8].findIndex((m) => tint & m)]; alpha = 0.3; }
+          else fill = col.cell;
+        }
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = fill;
+        ctx.fillRect(gutter + r * cw, y, Math.max(cw - (cw > 3 ? 0.5 : 0), 0.8), rowH);
+      }
+      ctx.globalAlpha = 1;
+    });
+    c._geo = { rowH, gap, gutter };
+    const feed = $('.feed', this.el);
+    if (feed) feed.style.maxHeight = Math.max(H + 22, 260) + 'px';
+    $('.lp-n', this.el).textContent = `${done.length} / ${n} 条已${this.kind === 'govern' ? '处理' : '检测'}`;
   }
 
   reset() {
@@ -213,10 +317,11 @@ class RunPanel {
     this.anchorAt = performance.now();
     this.lastT = 0;
     this.images = 0;
-    this.rows = 0;
+    this.rows = {};
+    this.lastEp = null;
     this.workers = null;
-    $$('.tile', this.el).forEach((t) => { t.className = 'tile'; t._tip = ''; t.innerHTML = t.dataset.ep; });
     $('.console', this.el).innerHTML = '';
+    $('.feed', this.el).innerHTML = '';
     $$('.phases li', this.el).forEach((li) => { li.className = ''; li.lastElementChild.textContent = ''; });
     $('.clock-v', this.el).textContent = '0.00';
     $('.clock-sub', this.el).textContent = '算子计时';
@@ -228,9 +333,15 @@ class RunPanel {
     $('.result', this.el).hidden = true;
     $('.run-body', this.el).hidden = false;
     $('.banner', this.el)?.remove();
-    this.live = { st: { 需复核: 0, 通过: 0, 价值提示: 0 }, cats: { 时序: 0, 同步: 0, 内容结构: 0, 数据价值: 0 }, fixed: 0, cells: 0, rejected: 0, flagged: 0, codes: new Set(), secs: 0 };
+    const z = () => ({ 时序: 0, 同步: 0, 内容结构: 0, 数据价值: 0 });
+    this.live = {
+      k: 0, st: { 需复核: 0, 通过: 0, 价值提示: 0 }, fst: { 需复核: 0, 通过: 0, 价值提示: 0 },
+      catEp: z(), catFr: z(), fcatFr: z(), flagged: 0, fflagged: 0, flaggedKnown: true,
+      fixed: 0, cells: 0, fixRows: 0, rejected: 0, codes: new Set(), secs: 0,
+    };
     this.setLiveCaption(null, true);
     this.renderLive();
+    this.drawLive();
   }
 
   setLiveCaption(ev, reset = false) {
@@ -241,7 +352,7 @@ class RunPanel {
       text.textContent = '运行开始，逐条处理中…';
       meta.textContent = this.kind === 'govern'
         ? '每条轨迹修了什么、为什么拒修，会在这里实时出现'
-        : '每条轨迹查出了什么，会在这里实时出现';
+        : '每条轨迹查出了什么、在第几行，会在这里实时出现';
       return;
     }
     const c = captionFor(ev, this.kind);
@@ -259,11 +370,11 @@ class RunPanel {
     const meta = $('.lc-meta', this.el);
     if (!text) return;
     if (this.kind === 'govern') {
-      text.textContent = `${this.n || L.k} 条跑完：${L.fixed} 条生成修复副本或元数据补丁，${fmt(L.cells)} 格改写，${L.rejected} 项拒修`;
-      meta.textContent = '下面只回答一个问题：修完比不修多留下多少帧';
+      text.textContent = `${this.n || L.k} 条跑完：${L.fixed} 条生成修复副本或元数据补丁，改写 ${fmt(L.cells)} 格；${L.rejected} 项证据不足、拒修`;
+      meta.textContent = `复检后问题行 ${fmt(L.flagged)} → ${fmt(L.fflagged)}；需复核轨迹 ${L.st['需复核']} → ${L.fst['需复核']}`;
     } else {
-      text.textContent = `${this.n || L.k} 条跑完：${L.st['需复核'] || 0} 条需复核，${fmt(L.flagged)} 行被帧级标记`;
-      meta.textContent = '红色是内容结构、蓝色是时序、橙色是同步；点任一行看画面';
+      text.textContent = `${this.n || L.k} 条跑完：${L.st['需复核'] || 0} 条需复核，${fmt(L.flagged)} 行被逐帧定位`;
+      meta.textContent = '蓝色时序、橙色同步、绿色内容结构、黄色数据价值；结果页可点任一行看画面';
     }
     $('.live-caption', this.el).classList.remove('pulse');
   }
@@ -271,12 +382,43 @@ class RunPanel {
   renderLive() {
     const L = this.live;
     const n = this.n || 89;
-    const st = [['需复核', '--bad'], ['通过', '--ok'], ['价值提示', '--warn']].map(([k, v]) => `<div><span>${k}</span><b><i style="background:var(${v})"></i>${L.st[k]}</b></div>`).join('');
-    const extra = this.kind === 'govern'
-      ? [['修复副本', L.fixed], ['改写单元格', fmt(L.cells)], ['证据不足拒修', L.rejected]]
-      : [['帧级定位行', L.flaggedKnown === false ? '—' : fmt(L.flagged)], ['命中问题码种类', L.codes.size], ['平均每条耗时', L.k ? (L.secs / L.k).toFixed(2) + ' s' : '—']];
-    $('.live-status', this.el).innerHTML = st + extra.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
-    $('.live-cats', this.el).innerHTML = '<div class="mini-h">四类问题涉及轨迹（实时累计）</div>' + CATS.map((c) => `<div class="hb"><span><i style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(${CAT_VAR[c]});margin-right:6px"></i>${c}</span><div class="t"><i style="width:${(L.cats[c] / n) * 100}%;background:var(${CAT_VAR[c]})"></i></div><span class="v">${L.cats[c]}<small> 条</small></span></div>`).join('');
+    const cell = (k, v, sub = '', cls = '') => `<div class="ls ${cls}"><span>${k}</span><b>${v}</b>${sub ? `<small>${sub}</small>` : ''}</div>`;
+    const arrow = (a, b) => `${fmt(a)}<em>→</em>${fmt(b)}`;
+    const stats = this.kind === 'govern'
+      ? [
+        cell('修复副本', fmt(L.fixed), '含元数据补丁', 'fix'),
+        cell('改写单元格', fmt(L.cells), `${fmt(L.fixRows)} 行有改动`),
+        cell('证据不足 · 拒修', fmt(L.rejected), '保持原样'),
+        cell('问题行：修复前 → 复检后', arrow(L.flagged, L.fflagged), '逐行重新检测', 'wide'),
+        cell('需复核轨迹', arrow(L.st['需复核'], L.fst['需复核']), `通过 ${L.st['通过']} → ${L.fst['通过']}`),
+      ]
+      : [
+        cell('需复核', `<i style="background:var(--bad)"></i>${L.st['需复核']}`),
+        cell('通过', `<i style="background:var(--ok)"></i>${L.st['通过']}`),
+        cell('仅价值提示', `<i style="background:var(--warn)"></i>${L.st['价值提示']}`),
+        cell('逐帧定位', L.flaggedKnown ? fmt(L.flagged) : '—', '行'),
+        cell('命中问题码', fmt(L.codes.size), '种'),
+        cell('平均每条', L.k ? (L.secs / L.k).toFixed(2) : '—', '秒'),
+      ];
+    $('.live-status', this.el).innerHTML = stats.join('');
+    const maxFr = Math.max(1, ...CATS.map((c) => Math.max(L.catFr[c], L.fcatFr[c])));
+    $('.live-cats', this.el).innerHTML = this.kind === 'govern'
+      ? '<div class="mini-h">四类问题的问题行：修复前 → 复检后</div>' + CATS.map((c) => `<div class="hb2"><span><i style="background:var(${CAT_VAR[c]})"></i>${c}</span>
+          <div class="t2"><i class="b" style="width:${(L.catFr[c] / maxFr) * 100}%"></i><i class="a" style="width:${(L.fcatFr[c] / maxFr) * 100}%;background:var(${CAT_VAR[c]})"></i></div>
+          <span class="v">${fmt(L.catFr[c])}<em>→</em><b>${fmt(L.fcatFr[c])}</b></span></div>`).join('')
+      : '<div class="mini-h">四类检测器命中（实时累计）</div>' + CATS.map((c) => `<div class="hb"><span><i style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(${CAT_VAR[c]});margin-right:6px"></i>${c}</span><div class="t"><i style="width:${(L.catEp[c] / n) * 100}%;background:var(${CAT_VAR[c]})"></i></div><span class="v">${L.catEp[c]}<small> 条</small> · ${L.catFr[c] ? fmt(L.catFr[c]) : '—'}<small> 帧</small></span></div>`).join('');
+  }
+
+  pushFeed(ev) {
+    const f = feedFor(ev, this.kind);
+    const li = document.createElement('li');
+    li.className = 'fi new fi--' + f.cls;
+    li.innerHTML = `<b class="fi-ep">${epName(ev.ep)}</b><span class="fi-tag">${esc(f.tag)}</span>
+      <span class="fi-main"><span class="fi-t">${esc(f.text)}</span><span class="fi-m">${f.chips}${esc(f.meta)}</span></span>`;
+    const feed = $('.feed', this.el);
+    feed.prepend(li);
+    requestAnimationFrame(() => li.classList.remove('new'));
+    while (feed.children.length > 30) feed.lastElementChild.remove();
   }
 
   log(msg, cls = '') {
@@ -306,9 +448,8 @@ class RunPanel {
 
   async runImport(r) {
     this.stage = r.id;
-    this.kind = r.repair ? 'govern' : 'detect';
-    this.setPhases(STAGE_CFG[this.kind].phases);
-    this.buildTiles(r.ids || []);
+    this.setKind(r.repair ? 'govern' : 'detect');
+    this.buildRows(r.ids || []);
     await this.follow();
   }
 
@@ -332,6 +473,7 @@ class RunPanel {
     }
     cancelAnimationFrame(this.raf);
     this.state = ok ? 'done' : 'idle';
+    this.drawLive();
     this.btn.disabled = false;
     this.btn.textContent = this.cfg.rerun;
     if (!ok) {
@@ -344,7 +486,7 @@ class RunPanel {
       if (this.opts.onDone) this.opts.onDone(false);
       return;
     }
-    await sleep(700);
+    await sleep(1200);
     await refreshInfo();
     await this.loadResult(true);
     if (this.opts.onDone) this.opts.onDone(true);
@@ -384,26 +526,38 @@ class RunPanel {
       }
       case 'episode': {
         this.k = ev.k;
-        this.images = ev.images_total;
-        this.rows = ev.rows_total;
         $('.pk', this.el).textContent = ev.k;
         $('.prog-bar i', this.el).style.width = (ev.k / ev.total) * 100 + '%';
         $('.c-rows', this.el).textContent = fmt(ev.rows_total);
         $('.c-img', this.el).textContent = fmt(ev.images_total);
         if (ev.t > 0.5) $('.c-ips', this.el).textContent = fmt(ev.images_total / ev.t) + ' 张/秒';
-        const st = this.kind === 'govern' ? ev.final_status : ev.status;
-        this.paintTile(ev.ep, st, ev.repaired || ev.meta_patch, ev.error, true, ev);
+        if (!this.ids.includes(ev.ep)) { this.ids.push(ev.ep); this.ids.sort((a, b) => a - b); this.n = this.ids.length; $('.pn', this.el).textContent = this.n; }
+        let epbits = 0;
+        for (const c of ev.epcodes || []) if (catOf(c) !== '数据价值') epbits |= CAT_BIT[catOf(c)];
+        const fix = runsToSet(ev.fixruns);
+        this.rows[ev.ep] = {
+          rows: ev.rows, mask: ev.mask || '', fmask: ev.fmask || '', fix, epbits,
+          status: ev.status, final_status: ev.final_status, codes: ev.codes || [], final_codes: ev.final_codes || [],
+        };
+        this.lastEp = ev.ep;
+        this.drawLive();
         this.setLiveCaption(ev);
+        this.pushFeed(ev);
         const L = this.live;
         L.k = ev.k;
-        L.st[st] = (L.st[st] || 0) + 1;
-        for (const c of new Set((ev.codes || []).map(catOf))) L.cats[c] += 1;
+        L.st[ev.status] = (L.st[ev.status] || 0) + 1;
+        L.fst[ev.final_status] = (L.fst[ev.final_status] || 0) + 1;
+        for (const c of new Set((ev.codes || []).map(catOf))) L.catEp[c] += 1;
         (ev.codes || []).forEach((c) => L.codes.add(c));
+        const bb = bitsOf(ev.mask), ab = bitsOf(this.kind === 'govern' ? ev.fmask : ev.mask);
+        for (const c of CATS) { L.catFr[c] += bb[c] || 0; L.fcatFr[c] += ab[c] || 0; }
         L.fixed += ev.repaired || ev.meta_patch ? 1 : 0;
         L.cells += ev.cells || 0;
+        L.fixRows += fix.size;
         L.rejected += ev.rejected || 0;
         if (ev.flagged == null) L.flaggedKnown = false;
         L.flagged += ev.flagged || 0;
+        L.fflagged += ev.fflagged ?? ev.flagged ?? 0;
         L.secs += ev.seconds || 0;
         this.renderLive();
         if (this.kind === 'govern' && (ev.repaired || ev.meta_patch)) {
@@ -411,6 +565,16 @@ class RunPanel {
         } else if (ev.error) {
           this.log(`${epName(ev.ep)} 处理异常，已记录并继续批次`, 'err');
         }
+        break;
+      }
+      case 'final': {
+        const L = this.live;
+        const z = { 需复核: 0, 通过: 0, 价值提示: 0 };
+        const st = { ...z, ...(ev.st || {}) }, fst = { ...z, ...(ev.fst || {}) };
+        const moved = ['需复核', '通过', '价值提示'].filter((k) => st[k] !== L.st[k]);
+        if (moved.length) this.log(`跨轨迹去重后按最终报告校正状态：${moved.map((k) => `${k} ${L.st[k]}→${st[k]}`).join('，')}`);
+        L.st = st; L.fst = fst;
+        this.renderLive();
         break;
       }
       case 'log':
@@ -422,6 +586,8 @@ class RunPanel {
         $('.clock-v', this.el).textContent = (ev.timing?.total_seconds_incl_all_csv_parquet_outputs ?? ev.t).toFixed(2);
         $('.clock-sub', this.el).textContent = `算子计时（读取 + 检测${this.kind === 'govern' ? ' + 修复 + 复检' : ''} + 全部文件写出）· ${hwLabel(ev.timing)}`;
         $$('.phases li', this.el).forEach((li) => { if (li.className === 'run') li.className = 'end'; });
+        this.lastEp = null;
+        this.drawLive();
         this.setFinalCaption();
         break;
       }
@@ -433,16 +599,13 @@ class RunPanel {
     }
   }
 
-  paintTile(ep, status, fixed, error, flash, ev) {
-    const t = $(`.tile[data-ep="${ep}"]`, this.el);
-    if (!t) return;
-    t.className = 'tile s-' + (error ? 'err' : STATUS_CLS[status] || 'bad') + (fixed ? ' fixed' : '') + (flash ? ' flash' : '');
-    if (ev) {
-      const codes = (this.kind === 'govern' ? ev.final_codes : ev.codes) || [];
-      t.innerHTML = `${ep}<small>${fmt(ev.rows)} 行</small>`;
-      t._tip = `<b>${epName(ep)}</b> · ${esc(status)} · ${fmt(this.kind === 'govern' ? ev.final_score : ev.score, 1)} 分 · ${fmt(ev.seconds, 2)} s<br>`
-        + (codes.length ? codes.map((c) => `<div class="tt-row"><i style="background:var(${CAT_VAR[catOf(c)]})"></i>${esc(c)}</div>`).join('') : '未命中问题码');
+  phaseTimes() {
+    const out = [];
+    for (const li of $$('.phases li', this.el)) {
+      const t = li.lastElementChild.textContent;
+      if (t) out.push([li.dataset.k, t]);
     }
+    return out;
   }
 
   async showSaved() {
@@ -452,9 +615,8 @@ class RunPanel {
 
   async showRun(id, repair, ids) {
     this.stage = id;
-    this.kind = repair ? 'govern' : 'detect';
-    this.setPhases(STAGE_CFG[this.kind].phases);
-    this.buildTiles(ids || []);
+    this.setKind(repair ? 'govern' : 'detect');
+    this.buildRows(ids || []);
     this.events = [];
     this.reset();
     await this.loadResult(false);
@@ -464,17 +626,11 @@ class RunPanel {
     const res = await api(`/api/result?stage=${this.stage}`);
     if (!res.ok) return toast(res.error);
     S.res[this.stage] = res;
-    if (this.opts.import && (!this.n || this.n !== res.episodes.length)) this.buildTiles(res.episodes.map((e) => e.id));
+    res._phases = this.events?.length ? this.phaseTimes() : [];
     markDone();
     this.state = 'done';
     this.btn.textContent = this.cfg.rerun;
     if (this.savedBtn) this.savedBtn.hidden = true;
-    // tiles reflect the saved result
-    for (const e of res.episodes) {
-      const st = this.kind === 'govern' ? e.final_status : e.status;
-      this.paintTile(e.id, st, e.repaired || (this.kind === 'govern' && (res.manifest || []).some((m) => +m.episode_index === e.id && m.kind === '仅元数据补丁')), false, false,
-        { codes: e.codes, final_codes: e.final_codes, score: e.score, final_score: e.final_score, rows: e.rows, seconds: e.seconds });
-    }
     const t = res.timing;
     $('.clock-v', this.el).textContent = (t?.total_seconds_incl_all_csv_parquet_outputs ?? 0).toFixed(2);
     if (!this.events?.length) {
@@ -497,15 +653,34 @@ class RunPanel {
   }
 }
 
+function feedFor(ev, kind) {
+  const c = captionFor(ev, kind);
+  const text = c.text.replace(/^第 \d+ 条 · /, '');
+  const codes = (kind === 'govern' ? ev.final_codes : ev.codes) || [];
+  const cats = [...new Set((ev.codes || []).map(catOf))];
+  const chips = cats.map((x) => `<i class="fi-c" style="background:var(${CAT_VAR[x]})" title="${x}"></i>`).join('');
+  if (ev.error) return { tag: '异常', cls: 'err', text, meta: c.meta, chips: '' };
+  if (kind === 'govern') {
+    if (ev.repaired || ev.meta_patch) return { tag: '修复', cls: 'fix', text, meta: c.meta, chips };
+    if (ev.rejected) return { tag: '拒修', cls: 'bad', text, meta: c.meta, chips };
+    if (!codes.length) return { tag: '通过', cls: 'ok', text: '没有需要修复的问题', meta: `${fmt(ev.rows)} 行`, chips: '' };
+    return { tag: '保持', cls: 'keep', text, meta: c.meta, chips };
+  }
+  if (!codes.length) return { tag: '通过', cls: 'ok', text: '未命中问题', meta: `${fmt(ev.rows)} 行 · ${fmt(ev.seconds, 2)} 秒`, chips: '' };
+  return { tag: ev.status === '价值提示' ? '提示' : '需复核', cls: ev.status === '价值提示' ? 'hint' : 'bad', text, meta: c.meta, chips };
+}
+
 // ------------------------------------------------------------ result pieces
 function kpi(label, value, sub, lead) {
   return `<div class="kpi panel ${lead ? 'lead' : ''}"><div class="k-l">${label}</div><div class="k-v">${value}</div><div class="k-s">${sub || ''}</div></div>`;
 }
 
+const PHASE_SHORT = { episodes: '逐条处理', dedup: '去重', outputs: '写出', summary: '汇总' };
 function speedKpi(res) {
   const t = res.timing || {};
+  const ph = (res._phases || []).filter(([k]) => PHASE_SHORT[k]).map(([k, v]) => `${PHASE_SHORT[k]} ${v}`).join(' · ');
   return kpi('总用时', `${fmt(t.total_seconds_incl_all_csv_parquet_outputs, 2)}<small>秒</small>`,
-    `${fmt(t.episodes_per_second, 2)} 条/秒 · ${fmt(t.decoded_images_per_second)} 张图像/秒<br>${hwLabel(t)}`, true);
+    `${fmt(t.episodes_per_second, 2)} 条/秒 · ${fmt(t.decoded_images_per_second)} 张图像/秒<br>${ph ? ph + '<br>' : ''}${hwLabel(t)}`, true);
 }
 
 function filesKpi(res, prefix) {
@@ -602,7 +777,7 @@ function renderDetectResult(res, box, panel) {
       </div>
       <div class="col">${catCard(res)}${scoreCard(res)}${filesCard(res, res.stage, ['report/'], '生成物：检测报告')}</div>
     </div>
-    ${res.stage === 'detect' ? '<div class="cta-row"><button class="cta" data-goto="2">下一步：修复</button><span class="hint">检测只读，原始数据未被改动；治理会在此基础上写修复副本</span></div>' : ''}`;
+    ${res.stage === 'detect' ? '<div class="cta-row"><button class="cta" data-goto="2">下一步：修复</button><span class="hint">检测只读，原始数据没有被改动；修复只写副本</span></div>' : ''}`;
   drawPanorama($('canvas[data-pano]', box), res, 'before', res.stage);
   $$('[data-goto]', box).forEach((b) => b.addEventListener('click', () => setStep(+b.dataset.goto)));
   bindCommon(box, res, res.stage);
@@ -1264,8 +1439,8 @@ function captionFor(ev, kind) {
       const r = crossR(b.rejected);
       const why = reasonLabel((b.rejected || '').split('；')[0]);
       const s = shift ? `${CAM_CN[shift.cam] || shift.cam}疑似错位 ${signed(shift.frames)} 帧` : why;
-      const evidence = r != null ? `跨相机相关只有 ${r.toFixed(2)}，低于 0.80` : '缺少足够的内容证据';
-      return { text: `${ep} · ${s} → 拒修`, meta: `${evidence} · 保持原样隔离` };
+      const evidence = shift ? (r != null ? `跨相机相关只有 ${r.toFixed(2)}，低于 0.80` : '画面内容证据不足') : '证据不足';
+      return { text: `${ep} · ${s} → 拒修`, meta: `${evidence} · 保持原样，问题段不进入训练` };
     }
     if (!finalCodes.length) return { text: `${ep} · 通过`, meta: `${fmt(ev.rows)} 行全部可进入训练` };
     return { text: `${ep} · ${codeLine(ev, finalCodes, shift)}`, meta: '证据不足或无需改写，保持原样' };

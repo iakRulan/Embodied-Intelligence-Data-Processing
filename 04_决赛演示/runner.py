@@ -45,6 +45,32 @@ def brief(orig: dict, repair: dict) -> dict:
     return out
 
 
+CAT_BIT = {"T": 1, "S": 2, "C": 4, "J": 4, "V": 8}  # 时序 / 同步 / 内容结构 / 数据价值
+
+
+def cat_mask(row_codes: list) -> str:
+    """逐行问题类别位掩码（每行一个十六进制字符，0 = 该行未命中），给页面实时铺逐帧全景用。"""
+    out = []
+    for s in row_codes or []:
+        m = 0
+        for c in (s.split(";") if s else []):
+            m |= CAT_BIT.get(c[:1], 4)
+        out.append(format(m, "x"))
+    return "".join(out)
+
+
+def row_runs(rows) -> list:
+    """[[起, 止], ...]：被修复改写过的数据行，压成连续区间。"""
+    xs = sorted({int(r) for r in rows if int(r) >= 0})
+    out = []
+    for x in xs:
+        if out and x == out[-1][1] + 1:
+            out[-1][1] = x
+        else:
+            out.append([x, x])
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--operator", required=True, help="算子目录（含 refsync_qa/ 与 run.py）")
@@ -92,7 +118,12 @@ def main() -> int:
              repaired=bool(r.get("repaired_rel_path")), meta_patch=bool(rep.get("meta_patch")),
              cells=len(rep.get("audit", [])), rejected=len(rep.get("rejected", [])),
              brief=brief(o, rep),
+             mask=cat_mask(o.get("row_codes", [])), epcodes=sorted(o.get("ep_codes", {})),
+             fmask=cat_mask(fin.get("row_codes", [])) if repair else "",
+             fixruns=row_runs(a.get("row", -1) for a in rep.get("audit", [])),
              flagged=sum(1 for x in o.get("row_codes", []) if x),
+             fflagged=sum(1 for x in fin.get("row_codes", []) if x),
+             final_tier=fin.get("tier"), tier=o.get("tier"),
              error=bool(r.get("error")), images_total=counter["images"], rows_total=counter["rows"])
 
     def as_completed(fs, timeout=None):
@@ -130,7 +161,22 @@ def main() -> int:
         emit(type="stage", stage="outputs", state="start")
         s = orig_build(*args, **kw)
         emit(type="stage", stage="outputs", state="end")
+        emit_final()
         return s
+
+    def emit_final():
+        """跨轨迹去重会再补问题码、改写状态；报告写出后按最终报告校正页面上的计数。"""
+        try:
+            import csv
+            with open(os.path.join(a.output, "report", "episode_report.csv"), encoding="utf-8-sig", newline="") as f:
+                rows = list(csv.DictReader(f))
+            st, fst = {}, {}
+            for r in rows:
+                st[r["status"]] = st.get(r["status"], 0) + 1
+                fst[r["final_status"]] = fst.get(r["final_status"], 0) + 1
+            emit(type="final", st=st, fst=fst, episodes=len(rows))
+        except Exception as exc:  # noqa: BLE001
+            emit(type="log", msg=f"[warn] 最终计数读取失败：{type(exc).__name__}")
 
     report.build_outputs = build_outputs
 

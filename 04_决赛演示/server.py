@@ -288,6 +288,52 @@ def replay_brief(stage: str, ep: int) -> dict:
     return out
 
 
+CAT_BIT = {"T": 1, "S": 2, "C": 4, "J": 4, "V": 8}
+
+
+def _hex_mask(codes_per_row: list[str]) -> str:
+    out = []
+    for s in codes_per_row:
+        m = 0
+        for c in split_codes(s):
+            m |= CAT_BIT.get(c[:1], 4)
+        out.append(format(m, "x"))
+    return "".join(out)
+
+
+def replay_rows(stage: str) -> dict[int, dict]:
+    """旧回放记录没有逐行掩膜时，从已写出的 frame_flags / repair_audit 补齐（与实时事件同一格式）。"""
+    def build(d: Path):
+        ff = frame_rows(stage)
+        eps = episode_rows(stage)
+        scope = {c: m.get("scope") for c, m in code_dictionary(stage).items()}
+        changed: dict[int, set] = defaultdict(set)
+        ap = d / "governed" / "repair_audit.csv"
+        if is_govern(stage) and ap.exists():
+            for a in read_csv(ap):
+                try:
+                    if int(a["row"]) >= 0:
+                        changed[int(a["episode_index"])].add(int(a["row"]))
+                except (KeyError, ValueError):
+                    pass
+        out = {}
+        for ep, er in eps.items():
+            rows = sorted(ff.get(ep, []), key=lambda x: int(x["row"]))
+            runs: list = []
+            for x in sorted(changed.get(ep, ())):
+                if runs and x == runs[-1][1] + 1:
+                    runs[-1][1] = x
+                else:
+                    runs.append([x, x])
+            out[ep] = {"mask": _hex_mask([r.get("issue_codes", "") for r in rows]),
+                       "fmask": _hex_mask([r.get("final_issue_codes", "") for r in rows]) if is_govern(stage) else "",
+                       "fixruns": runs, "fflagged": sum(1 for r in rows if r.get("final_issue_codes")),
+                       "epcodes": [c for c in split_codes(er.get("issue_codes")) if scope.get(c) == "轨迹级"],
+                       "tier": er.get("evidence_tier")}
+        return out
+    return cached(stage, "replay_rows", build)
+
+
 def run_replay(job: Job, speed: float = 1.0) -> None:
     src = stage_dir(job.stage) / "demo_events.jsonl"
     try:
@@ -297,11 +343,29 @@ def run_replay(job: Job, speed: float = 1.0) -> None:
         job.finish(False)
         return
     for ev in events:
-        if ev.get("type") == "episode" and not ev.get("brief"):
-            try:
+        if ev.get("type") != "episode":
+            continue
+        try:
+            if not ev.get("brief"):
                 ev["brief"] = replay_brief(job.stage, int(ev["ep"]))
-            except (KeyError, TypeError, ValueError):
-                pass
+            if "mask" not in ev:
+                for k, v in (replay_rows(job.stage).get(int(ev["ep"])) or {}).items():
+                    ev.setdefault(k, v)
+        except (KeyError, TypeError, ValueError, OSError):
+            pass
+    if not any(ev.get("type") == "final" for ev in events):
+        try:
+            st, fst = Counter(), Counter()
+            for r in episode_rows(job.stage).values():
+                st[r.get("status")] += 1
+                fst[r.get("final_status")] += 1
+            k = next((i for i, ev in enumerate(events) if ev.get("type") == "stage" and ev.get("stage") == "outputs"
+                      and ev.get("state") == "end"), None)
+            if k is not None:
+                events.insert(k + 1, {"type": "final", "t": events[k].get("t", 0), "st": dict(st), "fst": dict(fst),
+                                      "episodes": sum(st.values())})
+        except (OSError, ValueError, KeyError):
+            pass
     job.push({"type": "replay", "msg": "回放上一次实测记录（按原始时间节奏）", "recorded": time.strftime(
         "%Y-%m-%d %H:%M", time.localtime(src.stat().st_mtime))})
     t0 = time.perf_counter()
