@@ -4,23 +4,14 @@
 // ------------------------------------------------------------ utils
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const fmt = (n, d = 0) => (n == null || Number.isNaN(n) ? '—' : Number(n).toLocaleString('zh-CN', { minimumFractionDigits: d, maximumFractionDigits: d }));
-const pct = (x, d = 1) => (x == null ? '—' : (x * 100).toFixed(d) + '%');
 const fmtBytes = (b) => (b == null ? '—' : b >= 1e9 ? (b / 1e9).toFixed(2) + ' GB' : b >= 1e6 ? (b / 1e6).toFixed(1) + ' MB' : b >= 1e3 ? (b / 1e3).toFixed(1) + ' KB' : b + ' B');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const cssv = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-const epName = (e) => 'ep' + String(e).padStart(2, '0');
 async function api(path, opts) {
   const r = await fetch(path, opts);
   return r.json();
 }
 
-const CATS = ['时序', '同步', '内容结构', '数据价值'];
-const CAT_VAR = { 时序: '--c-t', 同步: '--c-s', 内容结构: '--c-c', 数据价值: '--c-v' };
-const CAT_BIT = { 时序: 1, 同步: 2, 内容结构: 4, 数据价值: 8 };
-const catOf = (code) => ({ T: '时序', S: '同步', C: '内容结构', J: '内容结构', V: '数据价值' }[code[0]] || '内容结构');
-const STATUS_CLS = { 通过: 'ok', 价值提示: 'hint', 需复核: 'bad' };
 const POLICY_VAR = {
   整段可用: '--ok', 修复后整段可用: '--fix', 切段使用: '--c-t', '部分修复+切段使用': '--c-c',
   隔离回采: '--bad', 文件不可用: '--ink-3', 处理失败: '--ink-3', 重复剔除: '--warn', '部分重复剔除+切段使用': '--c-v',
@@ -561,7 +552,7 @@ class RunPanel {
         L.secs += ev.seconds || 0;
         this.renderLive();
         if (this.kind === 'govern' && (ev.repaired || ev.meta_patch)) {
-          this.log(`${epName(ev.ep)} ${ev.repaired ? '修复副本已写出并回读核验' : '元数据补丁'} · 改写 ${ev.cells} 格 · 复检 ${fmt(ev.score, 1)} → ${fmt(ev.final_score, 1)} 分`);
+          this.log(`${epName(ev.ep)} ${ev.repaired ? '修复副本已写出并回读核验' : '元数据补丁（Parquet 不改）'}${ev.cells ? ` · 改写 ${ev.cells} 格` : ev.repaired ? ' · 数值逐位不变' : ''} · 复检 ${fmt(ev.score, 1)} → ${fmt(ev.final_score, 1)} 分`);
         } else if (ev.error) {
           this.log(`${epName(ev.ep)} 处理异常，已记录并继续批次`, 'err');
         }
@@ -653,22 +644,6 @@ class RunPanel {
   }
 }
 
-function feedFor(ev, kind) {
-  const c = captionFor(ev, kind);
-  const text = c.text.replace(/^第 \d+ 条 · /, '');
-  const codes = (kind === 'govern' ? ev.final_codes : ev.codes) || [];
-  const cats = [...new Set((ev.codes || []).map(catOf))];
-  const chips = cats.map((x) => `<i class="fi-c" style="background:var(${CAT_VAR[x]})" title="${x}"></i>`).join('');
-  if (ev.error) return { tag: '异常', cls: 'err', text, meta: c.meta, chips: '' };
-  if (kind === 'govern') {
-    if (ev.repaired || ev.meta_patch) return { tag: '修复', cls: 'fix', text, meta: c.meta, chips };
-    if (ev.rejected) return { tag: '拒修', cls: 'bad', text, meta: c.meta, chips };
-    if (!codes.length) return { tag: '通过', cls: 'ok', text: '没有需要修复的问题', meta: `${fmt(ev.rows)} 行`, chips: '' };
-    return { tag: '保持', cls: 'keep', text, meta: c.meta, chips };
-  }
-  if (!codes.length) return { tag: '通过', cls: 'ok', text: '未命中问题', meta: `${fmt(ev.rows)} 行 · ${fmt(ev.seconds, 2)} 秒`, chips: '' };
-  return { tag: ev.status === '价值提示' ? '提示' : '需复核', cls: ev.status === '价值提示' ? 'hint' : 'bad', text, meta: c.meta, chips };
-}
 
 // ------------------------------------------------------------ result pieces
 function kpi(label, value, sub, lead) {
@@ -849,7 +824,7 @@ function renderGovernResult(res, box, panel) {
           ${filesCard(res, res.stage, ['governed/'], '生成物：治理叠加层', ['report'])}
         </div>
       </div>
-      ${res.stage === 'govern' ? '<div class="cta-row"><button class="cta" data-goto="3">下一步：修复前后对比</button><span class="hint">先看全量对比，再逐条看 ep29 修复前后的画面、ep74 为什么不修</span></div>' : ''}
+      ${res.stage === 'govern' ? '<div class="cta-row"><button class="cta" data-goto="3">下一步：修复前后对比</button><span class="hint">' + pairHint(res) + '</span></div>' : ''}
     </div>`;
   requestAnimationFrame(() => {
     $$('.gh-row .t i', box).forEach((i) => (i.style.width = i.dataset.w + '%'));
@@ -1196,7 +1171,6 @@ function rotErr(M, off) {
   });
 }
 const diff = (a) => (a || []).map((v, i) => (i === 0 || v == null || a[i - 1] == null ? null : v - a[i - 1]));
-const pathNum = (p) => { const m = /(\d+)\.\w+$/.exec(p || ''); return m ? +m[1] : null; };
 function corr(a, b) {
   const xs = [], ys = [];
   for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] != null && b[i] != null && Number.isFinite(a[i]) && Number.isFinite(b[i])) { xs.push(a[i]); ys.push(b[i]); }
@@ -1332,144 +1306,13 @@ function codeListHtml(codes, dict, r) {
   return `<div class="sect"><h4>问题码（${codes.length}）</h4><div class="code-list">${codes.length ? codes.map((c) => `<div class="code-item"><span class="code"><i style="background:var(${CAT_VAR[catOf(c)]})"></i>${esc(c)}</span>${esc(details[c] || dict[c]?.description || '')}</div>`).join('') : '<span class="muted">未命中任何问题码</span>'}</div></div>`;
 }
 
-const CAMS = ['image', 'left_wrist_image', 'right_wrist_image'];
-const CAM_CN = { image: '场景相机', left_wrist_image: '左腕相机', right_wrist_image: '右腕相机' };
-const CODE_CN = {
-  J_SPIKE_JUMP: 'state / actions 相邻帧突跳',
-  J_STATE_ACTION_MISMATCH: 'state 与 actions 对不上',
-  J_ROT6D_INVALID: 'Rotation-6D 不满足正交约束',
-  J_GRIPPER_RANGE: '夹爪开度越界',
-  J_STATE_NONFINITE: 'state 有 NaN/Inf 空值',
-  J_ACTION_NONFINITE: 'actions 有 NaN/Inf 空值',
-  J_POSITION_ENVELOPE: '末端位置出现孤立越界值',
-  T_TIMESTAMP_GAP: '时间戳有掉帧缺口',
-  T_FRAME_INDEX_GAP: '帧号跳号，中间缺帧',
-  T_TIMESTAMP_NON_MONOTONIC: '时间戳重复或倒退',
-  T_TIMESTAMP_JITTER: '采样间隔抖动',
-  T_FRAME_ORDER_ERROR: '帧号重复或倒序',
-  T_INDEX_DISCONTINUITY: '全局 index 与帧号不同步',
-  T_TIMESTAMP_OFFSET: '时间戳基准不为 0',
-  T_TIMESTAMP_UNIT_MISMATCH: '时间戳单位标错',
-  T_TIMESTAMP_INVALID: '时间戳含非法值',
-  T_METADATA_LENGTH_MISMATCH: '元数据记录长度与实际不符',
-  C_IMAGE_SCREEN: '画面黑屏、白屏或低对比度',
-  C_IMAGE_BLUR: '画面模糊',
-  C_IMAGE_MOSAIC: '画面成块马赛克（有效分辨率过低）',
-  C_IMAGE_DUPLICATE: '相邻帧画面重复',
-  C_IMAGE_SHAPE: '图像分辨率或通道数不符',
-  C_FILE_UNREADABLE: '文件无法读取',
-  C_SCHEMA_MISSING_FIELD: '必需字段缺失',
-  C_SCHEMA_DTYPE_MISMATCH: '字段类型与声明不符',
-  S_IMAGE_PATH_MISMATCH: '图像路径与数据行局部不一致',
-  S_STREAM_MISSING: '某路相机整条没有图像',
-  S_SENSOR_LATE_START: '相机开头缺图',
-  S_SENSOR_EARLY_STOP: '相机结尾缺图',
-  S_SENSOR_DROPOUT: '相机中段断流',
-  S_STREAM_SHIFTED: '相机流整体错位',
-  S_TASK_INDEX_INVALID: '任务标签是未定义值',
-  S_TASK_SWITCH_WITHIN_EPISODE: '一条轨迹里任务标签中途变了',
-  S_TASK_META_MISMATCH: '任务标签与元数据不一致',
-  V_LOW_VISUAL_DIVERSITY: '画面多样性偏低',
-  V_LOW_INTERACTION: '有效交互帧偏少',
-  V_EPISODE_OVERLAP: '与其他轨迹重复',
-};
 function peakLag(values, L) {
   let k = -1, best = -2;
   (values || []).forEach((v, i) => { if (v != null && v > best) { best = v; k = i; } });
   return k < 0 ? null : { lag: k - L, r: best };
 }
-function fixLabel(m) {
-  const a = m.applied || '';
-  const mm = /^(\w+) 图像整体移回 ([+-]?\d+) 帧/.exec(a);
-  if (mm) return `${CAM_CN[mm[1]] || mm[1]}整体错位 ${mm[2]} 帧，移回真实画面`;
-  if (/task_index/.test(a)) return '任务标签与元数据不一致，按元数据改正';
-  if (/存储类型/.test(a)) return 'timestamp 存储类型无损转换，数值不变';
-  if (/越界/.test(a)) return '孤立单帧越界，只改越界分量';
-  if (/非有限/.test(a)) return 'NaN 稀疏补值，Rotation-6D 约束解出';
-  if (/length/.test(a)) return '元数据记录长度补丁，不改 Parquet';
-  return a.slice(0, 40);
-}
-function reasonLabel(r) {
-  r = (r || '').trim();
-  if (/^时间戳规整/.test(r)) return '缺帧不能凭空重建时间戳';
-  if (/^index 重建/.test(r)) return '帧号不连续，索引无法唯一确定';
-  if (/^时间戳/.test(r)) return '非单位类时间问题，不按标称周期伪造时钟';
-  if (/稀疏补值/.test(r)) return 'NaN 比例超过上限，整段不臆造';
-  if (/越界/.test(r)) return '连续越界不是孤立突跳，不插值';
-  if (/必需字段缺失/.test(r)) return '必需字段缺失，文件级隔离';
-  if (/重对齐/.test(r)) return '相机错位缺少内容证据，不移动画面';
-  if (/写后逐单元格校验失败/.test(r)) return '写后回读校验失败，副本丢弃';
-  return r.split('：')[0];
-}
 
-const signed = (n) => (n == null ? '—' : (n > 0 ? '+' : '') + n);
-function shiftFromText(text) {
-  const t = String(text || '');
-  const m = /(image|left_wrist_image|right_wrist_image)\s*图像整体移回\s*([+-]?\d+)\s*帧/.exec(t)
-    || /(image|left_wrist_image|right_wrist_image)\s*重对齐/.exec(t);
-  if (!m) return null;
-  const off = /图像整体移回\s*([+-]?\d+)\s*帧/.exec(t) || /path\s*偏移\s*([+-]?\d+)/.exec(t);
-  return { cam: m[1], frames: off ? +off[1] : null };
-}
-function crossR(text) {
-  const m = /跨相机运动相关[^；]*?r=([0-9.]+)/.exec(text || '');
-  return m ? +m[1] : null;
-}
-function armR(text) {
-  const m = /本臂运动[^；]*?r=([0-9.]+)/.exec(text || '');
-  return m ? +m[1] : null;
-}
-function codeLine(ev, codes, shift) {
-  const c = (codes || [])[0] || '';
-  if (shift) return `${CAM_CN[shift.cam] || shift.cam}画面整体错位 ${signed(shift.frames)} 帧`;
-  if (c === 'J_STATE_NONFINITE' && ev.flagged) return `state 有 ${fmt(ev.flagged)} 行空值（NaN/Inf）`;
-  if (c === 'J_POSITION_ENVELOPE' && ev.flagged) return `末端位置有 ${fmt(ev.flagged)} 行孤立越界`;
-  if (codes.length > 1) return `${CODE_CN[c] || c} · 另有 ${codes.length - 1} 类问题`;
-  return CODE_CN[c] || c;
-}
-function captionFor(ev, kind) {
-  const ep = `第 ${ev.ep} 条`;
-  const b = ev.brief || {};
-  const shift = b.shift || shiftFromText(b.applied || b.rejected);
-  const codes = ev.codes || [];
-  const finalCodes = ev.final_codes || [];
-  if (ev.error) return { text: `${ep} · 文件处理异常，已记录并继续批次`, meta: '其余轨迹照常处理' };
-  if (kind === 'govern') {
-    if (ev.repaired || ev.meta_patch) {
-      let what;
-      if (shift) what = `${CAM_CN[shift.cam] || shift.cam}画面整体错位 ${signed(shift.frames)} 帧 → 已移回`;
-      else if (ev.meta_patch) what = '元数据记录长度不符 → 只更新元数据';
-      else what = fixLabel({ applied: b.applied || '' });
-      const score = ev.score != null && ev.final_score != null ? `复检 ${fmt(ev.score, 2)} → ${fmt(ev.final_score, 2)} 分` : '';
-      return { text: `${ep} · ${what}`, meta: [ev.cells ? `改写 ${fmt(ev.cells)} 格` : '', score].filter(Boolean).join(' · ') };
-    }
-    if (b.rejected || ev.rejected) {
-      const r = crossR(b.rejected);
-      const why = reasonLabel((b.rejected || '').split('；')[0]);
-      const s = shift ? `${CAM_CN[shift.cam] || shift.cam}疑似错位 ${signed(shift.frames)} 帧` : why;
-      const evidence = shift ? (r != null ? `跨相机相关只有 ${r.toFixed(2)}，低于 0.80` : '画面内容证据不足') : '证据不足';
-      return { text: `${ep} · ${s} → 拒修`, meta: `${evidence} · 保持原样，问题段不进入训练` };
-    }
-    if (!finalCodes.length) return { text: `${ep} · 通过`, meta: `${fmt(ev.rows)} 行全部可进入训练` };
-    return { text: `${ep} · ${codeLine(ev, finalCodes, shift)}`, meta: '这类问题没有可用的修复方法，保持原样；问题帧不进入训练' };
-  }
-  if (!codes.length) return { text: `${ep} · 未命中阻断问题`, meta: `${fmt(ev.rows)} 行 · ${fmt(ev.seconds, 2)} 秒` };
-  const marked = ev.flagged ? `${fmt(ev.flagged)} 行被标记` : '整条轨迹级问题';
-  return { text: `${ep} · ${codeLine(ev, codes, shift)}`, meta: `${marked} · 共 ${fmt(ev.rows)} 行 · ${fmt(ev.seconds, 2)} 秒` };
-}
 
-function runsText(rows, max = 4) {
-  const xs = [...new Set(rows.map(Number).filter((v) => Number.isFinite(v)))].sort((a, b) => a - b);
-  if (!xs.length) return '—';
-  const out = [];
-  let a = xs[0], b = xs[0];
-  for (const x of xs.slice(1)) {
-    if (x === b + 1) b = x;
-    else { out.push([a, b]); a = b = x; }
-  }
-  out.push([a, b]);
-  return out.slice(0, max).map(([x, y]) => (x === y ? `第 ${x} 行` : `第 ${x}–${y} 行`)).join('、') + (out.length > max ? ' 等' : '');
-}
 function lagCorr(a, b, L = 12) {
   // 返回 lag ∈ [-L, L] 的相关系数；lag = +k 表示 a 第 t 行的画面对应 b 第 t+k 行（与 path 帧号偏移同号）
   const out = [];
@@ -1496,6 +1339,11 @@ async function ensureGovern() {
 
 function needGovernHtml(what) {
   return `<div class="panel empty"><h3>${what}需要先完成修复</h3><p>回到第 2 步运行一次修复，或切换到回放模式。</p><button class="cta" data-goto="2">去修复</button></div>`;
+}
+
+function pairHint(res) {
+  const P = shiftPairs(res);
+  return P.fixed && P.refused ? `先看全量对比，再逐条看 ${epName(P.fixed.episode_index)} 修复前后的画面、${epName(P.refused.episode_index)} 为什么不修` : '先看全量对比，再逐条看修复前后的画面';
 }
 
 function shiftPairs(res) {
@@ -1562,6 +1410,12 @@ function overallHtml(res, opts = {}) {
       <span class="bac-e">${eb}<em>→</em>${ea} 条</span>
     </div>`;
   }).join('');
+  // 哪一类下降最多：按这次的真实数字说，不写死
+  const drops = CATS.map((c) => [c, (C.cat_rows_before[c] || 0) - (C.cat_rows_after[c] || 0), (C.cat_eps_before[c] || 0) - (C.cat_eps_after[c] || 0)])
+    .filter((x) => x[1] > 0 || x[2] > 0).sort((a, b) => b[1] - a[1] || b[2] - a[2]);
+  const catNote = drops.length
+    ? `修复只动证据充分的那一部分：${drops[0][0]}类下降最多（${drops[0][1] > 0 ? `少 ${fmt(drops[0][1])} 帧` : ''}${drops[0][1] > 0 && drops[0][2] > 0 ? '、' : ''}${drops[0][2] > 0 ? `少 ${drops[0][2]} 条` : ''}）；证据不足的问题保持原样，带阻断问题的帧不进入训练。`
+    : '这批数据里没有可以安全修复的问题，修复前后各类问题不变；带阻断问题的帧不进入训练。';
   const moved = C.codes.filter((x) => x.episodes_before !== x.episodes_after || x.frames_before !== x.frames_after);
   const same = C.codes.length - moved.length;
   const codeRow = (x) => `<tr class="${x.episodes_after === 0 ? 'gone' : ''}">
@@ -1605,7 +1459,7 @@ function overallHtml(res, opts = {}) {
       <section class="panel card">
         <div class="card-h"><h3>四类问题：修复前 → 修复后</h3><span class="sub">上条灰 = 修复前，下条彩色 = 复检后</span></div>
         <div class="bacs">${catRows}</div>
-        <p class="note" style="margin-top:12px">修复只动证据充分的那一部分：同步类（相机错位、任务标签）下降最明显；证据不足的问题保持原样、不进入训练。</p>
+        <p class="note" style="margin-top:12px">${catNote}</p>
       </section>
       <section class="panel card">
         <div class="card-h"><h3>问题码变化</h3><span class="sub">${moved.length} 种有变化${same ? ` · 其余 ${same} 种不变` : ''}</span></div>
@@ -1732,7 +1586,7 @@ async function renderRepairNotes(stage, host, onOpen) {
         <span>问题码</span>${f.resolved.map((c) => chip(c, 'gone')).join('')}${f.remaining.map((c) => chip(c)).join('')}${f.new.map((c) => chip(c, 'new')).join('')}${!f.resolved.length && !f.remaining.length && !f.new.length ? '<span class="muted">无</span>' : ''}
         <span class="sep">治理决策 <b>${esc(f.policy)}</b></span>
         <span class="sep">训练帧 <b class="num">${fmt(f.train_frames)}</b>${f.clips.length ? `（第 ${f.clips.join('、')} 行）` : ''}</span>
-        <span class="sep">改写 <b class="num">${fmt(f.cells)}</b> 格</span>
+        <span class="sep">${f.cells ? `改写 <b class="num">${fmt(f.cells)}</b> 格` : f.kind === '仅元数据补丁' ? 'Parquet <b class="num">0</b> 改动' : '数值改动 <b class="num">0</b>'}</span>
       </div>
       ${f.rejected_here ? `<p class="note">同一条轨迹里没有改的部分：${esc(f.rejected_here)}</p>` : ''}
     </article>`).join('');
@@ -1819,9 +1673,10 @@ async function selectCase(ep, stage = 'govern', main = $('#cmpMain')) {
     const stateDim = d.raw.state?.[0]?.length || 0;
     const actionDim = d.raw.actions?.[0]?.length || 0;
     const totalCells = d.raw.n * (stateDim + actionDim);
-    let headline = fixed ? `修了：${fmt(audit.length)} 格改动` : '拒修：保持原样';
+    const nCells = audit.filter((a) => +a.row >= 0).length;
+    let headline = fixed ? `修了：${fmt(nCells)} 格改动` : '拒修：保持原样';
     let detail = fixed ? (m.applied || '') : (m.rejected || '');
-    let count = fixed ? `改写 ${fmt(audit.length)} 格` : '0 格改写';
+    let count = fixed ? `改写 ${fmt(nCells)} 格` : '0 格改写';
     if (!fixed) {
       headline = `拒修：${reasonLabel((m.rejected || '').split('；')[0])}`;
       detail = m.rejected || '';
@@ -1846,8 +1701,11 @@ async function selectCase(ep, stage = 'govern', main = $('#cmpMain')) {
       detail = 'episodes.jsonl 的记录长度与实际行数对齐；数据文件一个字节不改。';
       count = 'Parquet 0 改动';
     }
+    // 修了一部分、另一部分没修：讲清楚没修的是什么、还剩多少帧
+    const remain = fixed ? remainAfterFix({ finalCodes: after, rowFinal: d.row_final_codes, dict: res.code_dict || {} }) : [];
+    if (remain.length) detail += ` 但${remain.map((c) => codeCn(c, res.code_dict)).join('、')}没有修（${reasonLabel(splitClausesJs(m.rejected || '')[0] || '') || '没有可用的修复方法'}），${(epInfo.train_frames ?? +r.train_frames) === 0 ? '整条仍然不能进入训练' : '带这些问题的帧不进入训练'}。`;
     head = `<div class="panel cmp-head shift-head">
-      <div class="cmp-title"><h2>${epName(ep)}</h2><span class="badge ${fixed ? 'b-fix' : 'b-hint'}"><i></i>${fixed ? '修了' : '没修'}</span><span class="verdict-line">${esc(headline)}</span></div>
+      <div class="cmp-title"><h2>${epName(ep)}</h2><span class="badge ${fixed ? (remain.length ? 'b-hint' : 'b-fix') : 'b-hint'}"><i></i>${fixed ? (remain.length ? '修了一部分' : '修了') : '没修'}</span><span class="verdict-line">${esc(headline)}</span></div>
       <p class="cmp-method">${esc(detail)}</p>
       <div class="cmp-foot">
         <span class="badge">训练帧 ${fmt(epInfo.train_frames ?? r.train_frames)}</span>
@@ -1889,9 +1747,11 @@ function auditVal(v) {
 
 function auditHtml(audit, m) {
   const rows = audit.slice(0, 40);
-  return `<details class="audit-fold panel card"><summary><b>逐单元格修复审计</b><span>共 ${fmt(audit.length)} 格 · repair_audit.csv · 点开看原值 → 新值</span></summary>
+  const nCell = audit.filter((a) => +a.row >= 0).length, nCol = audit.length - nCell;
+  const cnt = [nCell ? `${fmt(nCell)} 格` : '', nCol ? `${fmt(nCol)} 条整列 / 元数据记录` : ''].filter(Boolean).join(' + ');
+  return `<details class="audit-fold panel card"><summary><b>逐单元格修复审计</b><span>共 ${cnt} · repair_audit.csv · 点开看原值 → 新值</span></summary>
     <div class="tbl-wrap" style="max-height:340px;margin-top:12px"><table class="tbl"><thead><tr><th>行</th><th>字段</th><th>原值</th><th>新值</th><th>方法</th></tr></thead><tbody>
-    ${rows.map((a) => `<tr><td>${esc(a.row)}</td><td class="mono">${esc(a.field)}</td><td class="mono del">− ${esc(auditVal(a.original_value))}</td><td class="mono add">+ ${esc(auditVal(a.repaired_value))}</td><td>${esc(a.method)}</td></tr>`).join('')}
+    ${rows.map((a) => `<tr><td>${+a.row < 0 ? '整列' : esc(a.row)}</td><td class="mono">${esc(a.field)}</td><td class="mono del">− ${esc(auditVal(a.original_value))}</td><td class="mono add">+ ${esc(auditVal(a.repaired_value))}</td><td>${esc(a.method)}</td></tr>`).join('')}
     </tbody></table></div>
     <dl class="kv" style="margin-top:12px"><dt>源文件 SHA256</dt><dd class="mono">${esc((m.source_sha256 || '').slice(0, 24))}… 原始文件只读未改</dd>
     ${m.repaired_sha256 ? `<dt>副本 SHA256</dt><dd class="mono">${esc(m.repaired_sha256.slice(0, 24))}… 写后逐格回读核验通过（未通过的副本会被直接丢弃）</dd>` : ''}</dl></details>`;
@@ -2015,7 +1875,7 @@ async function vizShift(viz, d, ep, fixed) {
     <div class="changed">
       <div class="chg-main ${fixed ? '' : 'bad'}"><b>${fmt(auditLen)}</b><span>格改写<br><small>${fixed ? `${fmt(moved)} 行移回 + ${fmt(blanked)} 行显式置空` : '没有生成修复副本'}</small></span></div>
       <div class="chg-keep"><b>${fixed ? fmt(otherDiffTotal) : '—'}</b><span>格改动<br><small>${fixed ? otherTxt : '整条保持原样'}</small></span></div>
-      <div class="chg-verdict">${fixed ? `复检 ${fmt(+d.manifest.score_before, 2)} → <b>${fmt(+d.manifest.score_after, 2)}</b><small>分数只是注脚</small>` : `<b>0</b> 帧进入训练<small>${esc(d.report.train_policy || '')}</small>`}</div>
+      <div class="chg-verdict">${fixed ? `复检 ${fmt(+d.manifest.score_before, 2)} → <b>${fmt(+d.manifest.score_after, 2)}</b><small>分数只是注脚</small>` : `<b>${fmt(+d.report.train_frames || 0)}</b> 帧进入训练<small>${esc(d.report.train_policy || '')}</small>`}</div>
     </div>`;
   const setImg = (fig, src, row, path) => {
     const img = $('img', fig);
@@ -2034,7 +1894,7 @@ async function vizShift(viz, d, ep, fixed) {
     const a = after?.paths?.[cam]?.[i];
     $('#vzAlign').innerHTML = fixed
       ? `<b>${camCn}</b>：修复前显示第 ${b ? pathNum(b) : '—'} 帧，修复后显示第 ${a ? pathNum(a) : '缺图'} 帧。${otherTxt}。`
-      : `<b>${camCn}</b>：仍显示第 ${b ? pathNum(b) : '—'} 帧。没有生成修复副本，整条保持隔离。`;
+      : `<b>${camCn}</b>：仍显示第 ${b ? pathNum(b) : '—'} 帧。没有生成修复副本，${+d.report.train_frames ? `只有 ${fmt(+d.report.train_frames)} 帧不受影响的片段进入训练` : '整条不进入训练'}。`;
     $('#vzRowLab').textContent = `第 ${i} 行 · frame ${raw.frame_index?.[i] ?? '—'}`;
     $('#vzRowMid').textContent = `第 ${i} 行`;
   };
@@ -2129,9 +1989,10 @@ function vizTask(viz, d) {
 function vizDtype(viz, d) {
   const raw = d.raw, after = d.after;
   const same = (raw.timestamp || []).every((v, i) => v === after?.timestamp?.[i]);
+  const unitLeft = String(d.report.final_issue_codes || '').split(';').includes('T_TIMESTAMP_UNIT_MISMATCH');
   viz.innerHTML = `<div class="card-h"><h3>字段存储类型与声明不符：无损转换，数值不变</h3></div>
-    <dl class="kv"><dt>info.json 声明</dt><dd>timestamp: float32</dd><dt>修复前存储</dt><dd class="mono">timestamp: ${esc(raw.dtypes?.timestamp)}</dd><dt>修复后存储</dt><dd class="mono">timestamp: ${esc(after?.dtypes?.timestamp)}</dd><dt>逐行数值</dt><dd>${same ? `${raw.n} 行全部相同` : '存在差异'}</dd></dl>
-    <p class="note sect">同一轨迹的单位疑似错误（T_TIMESTAMP_UNIT_MISMATCH）没有被改写：conservative 策略不按标称周期重建时间戳，保留给下游判断。</p>
+    <dl class="kv"><dt>info.json 声明</dt><dd class="mono">timestamp: ${esc(d.declared?.timestamp || '—')}</dd><dt>修复前存储</dt><dd class="mono">timestamp: ${esc(raw.dtypes?.timestamp)}</dd><dt>修复后存储</dt><dd class="mono">timestamp: ${esc(after?.dtypes?.timestamp)}</dd><dt>逐行数值</dt><dd>${same ? `${raw.n} 行全部相同` : '存在差异'}</dd></dl>
+    ${unitLeft ? `<p class="note sect">同一轨迹的时间戳单位疑似标错（T_TIMESTAMP_UNIT_MISMATCH）没有被改写：conservative 策略不按标称周期重建时间戳，所以这条修复后仍然 ${fmt(+d.report.train_frames || 0)} 帧进入训练。</p>` : ''}
     <div id="vzTs" class="sect"></div>`;
   lineChart($('#vzTs', viz), { n: raw.n, height: 150, series: [{ name: 'timestamp', values: raw.timestamp, color: 'var(--c-t)' }] });
 }
@@ -2352,21 +2213,6 @@ function renderImportResult(res, box, panel) {
   else renderImportBatch(res, box, imp);
 }
 
-function importType(d, e, dict = {}) {
-  const m = d.manifest || {};
-  const fixed = m.kind && m.kind !== '未修改';
-  const text = fixed ? (m.applied || '') : (m.rejected || '');
-  const shift = shiftFromText(text);
-  if (shift) return fixed ? 'shift-fixed' : 'shift-refused';
-  if (fixed && m.kind === '仅元数据补丁') return 'meta';
-  if (fixed) return 'cells';
-  if (m.rejected) return 'refused';
-  // 没有修复、也没有拒修记录：要么真的干净，要么是"没有修复手段"的问题（黑屏、模糊、马赛克…），不能当成干净
-  const codes = e.final_codes?.length ? e.final_codes : (e.codes || []);
-  if (codes.some((c) => dict[c]?.blocks !== false)) return 'norepair';
-  if (codes.length) return 'hint';
-  return 'clean';
-}
 
 function cellLabel(f) {
   const k = +/\[(\d+)\]/.exec(f)[1];
@@ -2432,139 +2278,24 @@ async function renderImportStory(res, box, e, imp, token) {
   const d = await api(`/api/episode?stage=${res.stage}&ep=${e.id}`);
   if (token != null && token !== S.impStoryToken) return;
   if (!d.ok || !d.raw?.ok || !d.raw.n) {
-    box.innerHTML = `<div class="story"><div class="panel empty"><h3>${epName(e.id)} 原始文件读不出画面</h3><p>${esc(d.error || d.raw?.error || '没有数据行')}</p></div></div>`;
+    const gone = /文件不存在/.test(d.error || d.raw?.error || '');
+    box.innerHTML = `<div class="story"><div class="panel empty"><h3>${epName(e.id)} 原始文件读不出画面</h3><p>${(e.codes || []).includes('C_FILE_UNREADABLE') ? `Parquet 文件损坏，算子判为文件不可用（C_FILE_UNREADABLE）：整条隔离，${fmt(e.train_frames || 0)} 帧进入训练；原始文件只读未改。<br><small class="muted">${esc(d.error || d.raw?.error || '')}</small>` : gone ? `原始文件已经不在原来的位置（${esc(imp.source || imp.input || '')}），可能被移走或删除；这次测试的检测结论仍在测试记录里：${esc(batchDesc(e, null))}。` : esc(d.error || d.raw?.error || '没有数据行')}</p></div></div>`;
     return;
   }
   const raw = d.raw, after = d.after, n = raw.n;
   const m = d.manifest || {};
-  const fixed = m.kind && m.kind !== '未修改';
   const audit = d.audit || [];
   const codes = e.codes || [];
-  const detectOnly = imp.repair === false;
-  const text = fixed ? (m.applied || '') : (m.rejected || '');
-  const cov = String(d.report?.sync_evidence_index_coverage || '');
-  const cm = /(image|left_wrist_image|right_wrist_image):path偏移([+-]?\d+)/.exec(cov);
-  const shift = shiftFromText(text) || (detectOnly && cm ? { cam: cm[1], frames: +cm[2] } : null);
-  const rr = crossR(text);
-  const arm = armR(text);
-  const keep = Math.max(0, Math.min(n, e.train_frames || 0));
-  let type = importType(d, e, res.code_dict || {});
-  if (detectOnly) type = 'detect-only';
-  if (type === 'cells' && !audit.length) type = 'fixed';
-  const camCn = shift ? (CAM_CN[shift.cam] || shift.cam) : '';
-  const off = shift?.frames ?? 0;
   const ints = d.intervals || [];
-  let problem = '', action = '', evidence = [];
-  if (type === 'shift-fixed') {
-    const moved = (after?.paths?.[shift.cam] || []).filter(Boolean).length;
-    const blank = n - moved;
-    problem = `同一行里，${camCn}的画面和机械臂状态差了 ${Math.abs(off)} 帧：夹爪闭合的瞬间对不上。`;
-    action = `移回 ${fmt(moved)} 帧画面；开头 ${fmt(blank)} 帧相机没拍到，显式置空，不合成任何画面。`;
-    evidence = [
-      ['path 偏移', `${signed(off)} 帧，整条恒定`, true],
-      ['跨相机相关', `r = ${rr == null ? '—' : rr.toFixed(2)} ≥ 0.80`, rr != null && rr >= 0.8],
-      ['对端缺图', `${Math.abs(off)} 帧，正好对上`, true],
-    ];
-  } else if (type === 'shift-refused') {
-    problem = `${camCn}的画面疑似整体错了 ${Math.abs(off)} 帧，但画面内容没有给出足够的对应证据。`;
-    action = '没修。整条保持原样隔离，不让伪同步画面进入训练。';
-    evidence = [
-      ['path 偏移', `${signed(off)} 帧（只是索引，不是内容证据）`, null],
-      ['跨相机相关', `r = ${rr == null ? '—' : rr.toFixed(2)} < 0.80`, false],
-      ...(arm != null ? [['本臂相关', `r = ${arm.toFixed(2)} < 0.60`, arm >= 0.6]] : []),
-    ];
-  } else if (type === 'detect-only') {
-    if (!codes.length && !shift) {
-      problem = '这条数据没有检测到阻断问题。';
-      action = '本次只检测；没有需要修复的地方，整条可进入训练。';
-      evidence = [['检测结果', '未命中阻断问题', true]];
-    } else {
-      problem = shift
-        ? `同一行里，${camCn}的画面和机械臂状态差了 ${Math.abs(off)} 帧。`
-        : `${codeLine({ flagged: e.flagged_frames, rows: n }, codes)}。`;
-      action = '本次选择只检测，没有生成修复副本；问题段不进入训练。';
-      evidence = [
-        ['检测结论', codes.length ? codes.join('、') : '未命中阻断问题', !codes.length],
-        ['修复', '未执行（只检测）', null],
-        ...(shift ? [['path 偏移', `${signed(off)} 帧`, true]] : []),
-      ];
-    }
-  } else if (type === 'cells') {
-    const rows = [...new Set(audit.map((a) => +a.row))];
-    const isVec = audit.some((a) => /^(state|actions)\[/.test(a.field));
-    const dims = (raw.state?.[0]?.length || 20) + (raw.actions?.[0]?.length || 20);
-    const unchanged = isVec ? n * dims - audit.length : null;
-    if (codes.includes('J_STATE_NONFINITE')) {
-      problem = `state 里有 ${fmt(audit.length)} 个空值（NaN/Inf）。这些格直接进训练会让损失变成 NaN。`;
-      action = `只补这 ${fmt(audit.length)} 格：Rotation-6D 按正交约束解出，其余分量逐位不变。`;
-    } else if (codes.includes('J_POSITION_ENVELOPE')) {
-      problem = `末端位置有 ${fmt(audit.length)} 个孤立越界值。`;
-      action = '只把越界分量改成前后帧均值；其余分量逐位不变。';
-    } else if (codes.some((c) => /^S_TASK/.test(c))) {
-      problem = '任务标签和元数据登记的不一致。';
-      action = '整条统一为元数据登记的任务，只改 task_index 这一列；画面、动作、时间戳不动。';
-    } else if (codes.includes('C_SCHEMA_DTYPE_MISMATCH')) {
-      problem = '字段存储类型和 info.json 声明不符。';
-      action = '按声明做无损转换，每个数值逐位不变。';
-    } else {
-      problem = `检测到 ${codes.length} 类可以安全修复的问题。`;
-      action = fixLabel(m) || m.applied || '只改写检测到的单元格，其余逐位不变。';
-    }
-    evidence = [
-      ['改写', `${fmt(audit.length)} 格（${runsText(rows)}）`, true],
-      ['写后核验', '逐格回读一致', true],
-      ...(unchanged != null ? [['没有动的格', `${fmt(unchanged)} 格逐位不变`, true]] : []),
-    ];
-  } else if (type === 'fixed') {
-    problem = `检测到 ${codes.length || 1} 类问题，可以直接修复。`;
-    action = fixLabel(m) || m.applied || '按审计记录逐格改写。';
-    evidence = [['处理方式', m.applied || '', true]];
-  } else if (type === 'meta') {
-    problem = 'episodes.jsonl 记录的长度和实际行数不一致。';
-    action = '只更新元数据记录，Parquet 文件不改。';
-    evidence = [
-      ['实际行数', `${fmt(n)} 行`, true],
-      ['Parquet', '未改动', true],
-    ];
-  } else if (type === 'norepair') {
-    const dict = res.code_dict || {};
-    const blocking = codes.filter((c) => dict[c]?.blocks !== false);
-    problem = `${codeLine({ flagged: e.flagged_frames, rows: n }, blocking.length ? blocking : codes)}：${fmt(e.flagged_frames)} / ${fmt(n)} 帧被标记。`;
-    action = '这类问题没有安全的修复方法（不能凭空生成画面或数据），不修；被标记的帧不进入训练。';
-    evidence = [
-      ['检测结论', (blocking.length ? blocking : codes).join('、'), false],
-      ['被标记帧', `${fmt(e.flagged_frames)} / ${fmt(n)} 帧`, false],
-      ['修复', '不在可修复范围，保持原样', null],
-    ];
-  } else if (type === 'hint') {
-    problem = `只有数据价值提示（不阻断训练）：${codes.map((c) => CODE_CN[c] || c).join('、')}。`;
-    action = '数据价值提示不影响训练，不需要修复。';
-    evidence = [['检测结论', codes.join('、'), null]];
-  } else if (type === 'refused') {
-    problem = `检测到问题，但证据不足：${reasonLabel((m.rejected || '').split('；')[0])}。`;
-    action = '没修。问题段不进入训练，整条交由人工复核或隔离回采。';
-    evidence = splitClausesJs(m.rejected || '').slice(0, 4).map((s) => [reasonLabel(s), s.slice(0, 140), null]);
-  } else {
-    problem = '这条数据没有检测到阻断问题。';
-    action = '不需要修复，整条进入训练。';
-    evidence = [['检测结果', '未命中阻断问题', true]];
-  }
-  let row = Math.min(n - 1, 25);
-  if (shift) row = Math.min(n - 1, Math.max(25, Math.abs(off) + 20));
-  else if (audit.length) row = Math.min(n - 1, Math.max(0, +audit[0].row));
-  else if (ints.length) row = Math.min(n - 1, Math.max(0, +ints[0].start_row));
+  const M = storyModel({ e, d, imp, dict: res.code_dict || {} });
+  const { type, fixed, detectOnly, shift, camCn, off, keep, problem, action, evidence, keepText, scoreTxt, row, verdictCls } = M;
   const camFig = (c) => `<figure class="story-cam ${c === shift?.cam ? 'affected' : ''}" data-cam="${c}"><img alt=""><figcaption>${CAM_CN[c]}<em class="frame-no">—</em></figcaption></figure>`;
-  const intervalHtml = ints.length ? `<div class="story-intervals">${ints.slice(0, 6).map((it) => `<div class="si"><span>${esc(it.issue_code)}</span><div class="si-bar"><i style="left:${(+it.start_row / n) * 100}%;width:${Math.max(((+it.end_row - +it.start_row + 1) / n) * 100, 1)}%;background:var(${CAT_VAR[catOf(it.issue_code)]})"></i></div><b>第 ${it.start_row}–${it.end_row} 行</b></div>`).join('')}</div>` : '';
+  // 问题区间：每个问题码一行，合并它的所有区间；按影响帧数排序
+  const byCode = {};
+  for (const it of ints) (byCode[it.issue_code] = byCode[it.issue_code] || []).push(it);
+  const codeRows = Object.entries(byCode).sort((a, b) => (M.codeFrames[b[0]] || 0) - (M.codeFrames[a[0]] || 0)).slice(0, 6);
+  const intervalHtml = codeRows.length ? `<div class="story-intervals">${codeRows.map(([c, its]) => `<div class="si"><span>${esc(c)}</span><div class="si-bar">${its.map((it) => `<i style="left:${(+it.start_row / n) * 100}%;width:${Math.max(((+it.end_row - +it.start_row + 1) / n) * 100, 0.6)}%;background:var(${CAT_VAR[catOf(c)]})"></i>`).join('')}</div><b>${its.length === 1 ? `第 ${its[0].start_row}–${its[0].end_row} 行` : `${fmt(M.codeFrames[c] || 0)} 帧 · ${its.length} 段`}</b></div>`).join('')}</div>` : '';
   const evHtml = evidence.map(([k, v, pass]) => `<div class="story-ev ${pass === true ? 'pass' : pass === false ? 'fail' : ''}"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('');
-  const notKeep = n - keep;
-  let keepText;
-  if (keep === n) keepText = `全部 ${fmt(n)} 帧都能进入训练。`;
-  else if (keep === 0) keepText = '0 帧进入训练；整条交给人工复核或隔离回采。';
-  else if (type === 'shift-fixed') keepText = `开头 ${fmt(n - keep)} 帧修复后没有画面，不进入训练；其余 ${fmt(keep)} 帧全部可用。`;
-  else keepText = `${fmt(notKeep)} 帧不进入训练：复检后仍有阻断问题，或不足 30 帧连续。`;
-  const sb = m.score_before != null ? +m.score_before : e.score;
-  const sa = m.score_after != null ? +m.score_after : e.final_score;
-  const scoreTxt = detectOnly ? `检测评分 ${fmt(sb, 2)} 分 · 未修复` : fixed ? `复检 ${fmt(sb, 2)} → <b>${fmt(sa, 2)}</b> 分` : `复检 ${fmt(sb, 2)} 分 · 保持原样`;
   box.innerHTML = `<div class="story">
     <header class="story-head panel">
       <div class="story-kicker">导入测试 · 单条轨迹 · ${esc(imp.created || '')}</div>
@@ -2587,7 +2318,7 @@ async function renderImportStory(res, box, e, imp, token) {
       <div class="story-rail">02</div>
       <div class="story-content">
         <h3>修了，还是没修？</h3>
-        <p class="story-verdict ${fixed ? 'fixed' : type === 'clean' || type === 'hint' ? 'ok' : 'refused'}">${esc(action)}</p>
+        <p class="story-verdict ${verdictCls}">${esc(action)}</p>
         ${type === 'shift-fixed' ? `<div class="sameframe">
           <figure class="sameframe-item"><img data-side="raw" alt=""><figcaption>修复前 · 第 <em class="frame-no">—</em> 帧</figcaption></figure>
           <div class="sameframe-arrow">移回 ${Math.abs(off)} 帧<br><span>同一行 →</span></div>
@@ -2680,15 +2411,8 @@ function renderImportBatch(res, box, imp) {
   const keep = eps.reduce((s, e) => s + (e.train_frames || 0), 0);
   const rows = eps.reduce((s, e) => s + (e.rows || 0), 0);
   const flagRows = res.detection?.flagged_frames;
-  const desc = (e) => {
-    const m = manOf(e.id);
-    if (m) {
-      if (m.kind !== '未修改') return fixLabel(m);
-      if (m.rejected) return '拒修：' + reasonLabel(m.rejected.split('；')[0]);
-    }
-    if (!(e.codes || []).length) return '未命中问题';
-    return codeLine({ flagged: e.flagged_frames, rows: e.rows }, e.codes);
-  };
+  const desc = (e) => batchDesc(e, manOf(e.id));
+
   const what = (e) => {
     const m = manOf(e.id);
     if (!m || m.kind === '未修改') return '';
@@ -2738,18 +2462,6 @@ function renderImportBatch(res, box, imp) {
   $$('.batch-case', box).forEach((b) => b.addEventListener('click', () => openEp(+b.dataset.ep)));
 }
 
-function splitClausesJs(text) {
-  const out = [];
-  let depth = 0, cur = '';
-  for (const ch of String(text || '')) {
-    if (ch === '（' || ch === '(') depth++;
-    if (ch === '）' || ch === ')') depth = Math.max(0, depth - 1);
-    if (ch === '；' && depth === 0) { if (cur.trim()) out.push(cur.trim()); cur = ''; }
-    else cur += ch;
-  }
-  if (cur.trim()) out.push(cur.trim());
-  return out;
-}
 
 // ------------------------------------------------------------ boot
 async function refreshInfo() {

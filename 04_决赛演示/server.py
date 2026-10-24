@@ -799,7 +799,12 @@ def episode_detail(stage: str, ep: int) -> dict:
            "row_codes": [x.get("issue_codes", "") for x in sorted(flags, key=lambda x: int(x["row"]))],
            "row_final_codes": [x.get("final_issue_codes", "") for x in sorted(flags, key=lambda x: int(x["row"]))],
            "row_streams": [x.get("streams", "") for x in sorted(flags, key=lambda x: int(x["row"]))],
-           "raw": raw, "after": None, "audit": [], "manifest": None, "mask": None}
+           "raw": raw, "after": None, "audit": [], "manifest": None, "mask": None, "declared": {}}
+    try:  # info.json 声明的字段类型（类型不符的修复要对照它）
+        feats = json.loads((stage_input(stage) / "meta" / "info.json").read_text(encoding="utf-8")).get("features", {})
+        res["declared"] = {k: (feats.get(k) or {}).get("dtype") for k in ("timestamp", "frame_index", "index", "task_index") if k in feats}
+    except (OSError, ValueError, AttributeError):
+        pass
     g = d / "governed"
     mp = g / "quality_masks" / f"episode_{ep:06d}.csv"
     if mp.exists():
@@ -985,7 +990,7 @@ SAFETY_RULES = [
 REASON_RULES = [
     (r"^时间戳规整", "缺帧不能凭空重建时间戳", "帧号本身不连续（中间缺帧或乱序），无法确定缺掉的是哪几帧；按标称周期补出时间戳等于伪造时钟。"),
     (r"^index 重建", "帧号不连续，索引无法唯一确定", "index 与 frame_index 不同步，而 frame_index 自己也不连续，无法判断哪一列是对的。"),
-    (r"^时间戳", "非单位类时间问题，不伪造时钟", "时间戳的抖动、倒退或间隔异常不是单位或基准问题；默认保留真实测量时间，不按 1/fps 规整。"),
+    (r"^时间戳", "时间戳偏差不能无损还原，不伪造时钟", "只有整条可逆的单位换算或基准归零能把时间戳还原到 frame_index/fps（误差在抖动容差内）时才修；抖动、倒退，或换算 / 归零后仍对不上的，保留真实测量时间，不按 1/fps 规整。"),
     (r"稀疏补值", "NaN 太多或缺口太长，整段不臆造", "缺失超过 10% 的行，或连续缺口超过 2 帧，补出来的值就是猜测。"),
     (r"越界", "连续越界不是孤立突跳，不插值", "越界持续多帧，可能是真实动作或标定问题，插值会抹掉真实信号。"),
     (r"必需字段缺失", "必需字段缺失，文件级隔离", "缺少检测和训练必需的字段，无从修复。"),
@@ -1214,7 +1219,8 @@ def explain_repairs(stage: str) -> dict:
                 for meth in REPAIR_METHODS:
                     if code in meth["codes"]:
                         method_count[meth["key"]] += 1
-            fixed.append({**base, "cells": len(aud_by.get(ep, [])), "sections": sections, "applied": m.get("applied"),
+            fixed.append({**base, "cells": sum(1 for a in aud_by.get(ep, []) if int(fnum(a.get("row"), -1) or 0) >= 0),
+                          "sections": sections, "applied": m.get("applied"),
                           "rejected_here": m.get("rejected")})
         cand_groups: dict[str, dict] = {}
         for c in cands:

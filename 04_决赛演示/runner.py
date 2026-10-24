@@ -48,6 +48,14 @@ def brief(orig: dict, repair: dict) -> dict:
 CAT_BIT = {"T": 1, "S": 2, "C": 4, "J": 4, "V": 8}  # 时序 / 同步 / 内容结构 / 数据价值
 
 
+def _row_ge0(a: dict) -> bool:
+    """与算子 values_changed 口径一致：row < 0 是整列 / 元数据级记录（类型转换、length 补丁），不算改写的单元格。"""
+    try:
+        return int(a.get("row", -1)) >= 0
+    except (TypeError, ValueError):
+        return False
+
+
 def cat_mask(row_codes: list) -> str:
     """逐行问题类别位掩码（每行一个十六进制字符，0 = 该行未命中），给页面实时铺逐帧全景用。"""
     out = []
@@ -116,7 +124,7 @@ def main() -> int:
              score=o["score"].get("overall_score"), final_score=fin["score"].get("overall_score"),
              codes=o["codes"], final_codes=fin["codes"],
              repaired=bool(r.get("repaired_rel_path")), meta_patch=bool(rep.get("meta_patch")),
-             cells=len(rep.get("audit", [])), rejected=len(rep.get("rejected", [])),
+             cells=sum(1 for a in rep.get("audit", []) if _row_ge0(a)), rejected=len(rep.get("rejected", [])),
              brief=brief(o, rep),
              mask=cat_mask(o.get("row_codes", [])), epcodes=sorted(o.get("ep_codes", {})),
              fmask=cat_mask(fin.get("row_codes", [])) if repair else "",

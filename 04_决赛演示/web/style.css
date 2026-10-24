@@ -911,3 +911,4 @@ article.fix header { display: flex; align-items: center; gap: 10px; flex-wrap: w
 .batch-h { font-size: 18px; margin: 6px 4px -4px; }
 .bc-head .muted { font-size: 13px; }
 .story-facts b { color: var(--ink); }
+.story-verdict.partial { border-left-color: var(--warn); }

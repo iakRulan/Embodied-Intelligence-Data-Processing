@@ -86,6 +86,22 @@ macOS 也可双击 `start_demo.command`（自动选可用 Python、清理端口�
 - 第 1、2 步右侧「查看上次结果」直接打开最近一次输出。
 - 旧版运行器录的回放记录也能用：缺少的逐行数据由服务端从报告补齐。**换机器或改版后，建议在演示用的电脑上实时各跑一遍检测和修复**，回放记录和硬件信息就会换成这台机器的。
 
+## 页面文字自检
+
+页面上每一句自动生成的结论（单条导入页、批量页、实时流水、第 3 步逐条对比）都由 `web/logic.js` 里的函数写出。
+`tools/check_text.js` 用真实运行结果逐条核对这些文字和算子输出是否一致，改了页面文字或换了算子版本后跑一遍：
+
+```bash
+python3 server.py --no-browser &          # 先启动服务
+node tools/check_text.js                  # 核对第 1、2 步的全部轨迹
+node tools/check_text.js --imports        # 连同导入测试记录一起核对
+```
+
+核对内容：有阻断问题时不能说"没有检测到问题 / 全部帧进入训练"；"全部 N 帧 / 0 帧 / X 帧不进入训练"和
+`train_frames`、`quality_masks` 逐帧一致；"被标记的帧不进入训练"时这些帧确实 `train_keep=False`；相机错位修复的置空行数、
+门槛证据、分数、改写格数与 `repair_manifest` / `repair_audit` 一致；修了一部分时没修的部分必须写出来；回放流水标签与最终报告一致；
+全量对比的每个数字独立重算。全部一致输出 `✓ 全部一致`，否则逐条列出并以非 0 退出。
+
 ## 配置
 
 `demo_config.json`（相对本目录；可用环境变量覆盖）：
@@ -106,5 +122,5 @@ macOS 也可双击 `start_demo.command`（自动选可用 Python、清理端口�
 
 | 入库 | 不入库 |
 |---|---|
-| `server.py`、`runner.py`、`web/`、`demo_config.json`、`start_demo.command`、本 README | `runs/`（运行产物、修复副本、回放记录） |
+| `server.py`、`runner.py`、`web/`、`tools/`、`demo_config.json`、`start_demo.command`、本 README | `runs/`（运行产物、修复副本、回放记录） |
 | `_archive_report_demo/index.html`（归档的汇报看板） | 赛题原始/修复数据（`*.parquet`）、`*.zip` |
