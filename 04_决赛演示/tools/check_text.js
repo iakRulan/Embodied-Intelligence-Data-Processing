@@ -196,7 +196,7 @@ async function checkStage(stage) {
       if (ev.status !== e.status && !(e.codes || []).some((x) => /^V_EPISODE_(DUPLICATE|OVERLAP)/.test(x))) B('流水状态 ≠ 最终状态', `${ev.status} vs ${e.status}`);
     }
     const fin = evs.find((x) => x.type === 'final');
-    if (!fin && !/^imp-/.test(stage)) bad(stage, '-', '回放缺少 final 事件（实时计数会和最终报告对不上）', '');
+    if (!fin) { if (!/^imp-/.test(stage)) bad(stage, '-', '回放缺少 final 事件（实时计数会和最终报告对不上）', ''); }
     else {
       const st = {};
       for (const e of res.episodes) st[e.status] = (st[e.status] || 0) + 1;
