@@ -313,7 +313,9 @@ class Repairer:
             else:
                 label = f"{'+'.join(parts) or '无损变换'}后与 frame_index/fps 最大偏差 {dev:.4g} s（>{tol:.2g} s，原值含截断/抖动）"
         if lossless is None and policy == "conservative":
-            self.rejected.append("时间戳：非单位/基准类问题，conservative 策略不按标称周期重建")
+            # label 非空 = 确实是单位 / 基准类问题，但无损变换还原不出 frame_index/fps；否则才是抖动、倒退等非单位 / 基准类问题
+            why = f"{label}，无法无损还原" if label else "非单位/基准类问题"
+            self.rejected.append(f"时间戳：{why}，conservative 策略不按标称周期重建")
             self._candidate(";".join(sorted(trig)), "timestamp = frame_index / fps（按标称周期规整）",
                             f"frame_index 连续；jitter 容差 {tol:.4g}s", "timestamp_policy=conservative")
             return
