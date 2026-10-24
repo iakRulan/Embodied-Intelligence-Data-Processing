@@ -805,6 +805,10 @@ def episode_detail(stage: str, ep: int) -> dict:
         res["declared"] = {k: (feats.get(k) or {}).get("dtype") for k in ("timestamp", "frame_index", "index", "task_index") if k in feats}
     except (OSError, ValueError, AttributeError):
         pass
+    try:
+        res["image_evidence"] = image_evidence(stage, ep, intervals, flags) if raw.get("ok") else {}
+    except Exception as exc:  # noqa: BLE001 - 证据只是说明，失败不影响页面
+        res["image_evidence"] = {"error": str(exc)}
     g = d / "governed"
     mp = g / "quality_masks" / f"episode_{ep:06d}.csv"
     if mp.exists():
@@ -873,6 +877,69 @@ def frame_png(stage: str, ep: int, row: int, cam: str, src: str) -> bytes | None
     if not 0 <= row < len(b):
         return None
     return b[row]
+
+
+IMAGE_CODES = ("C_IMAGE_BLUR", "C_IMAGE_MOSAIC", "C_IMAGE_SCREEN", "C_IMAGE_DUPLICATE", "C_IMAGE_SHAPE")
+
+
+def _sharpness(b: bytes) -> tuple[float, float] | None:
+    """与算子 features._image_metrics 同一口径：灰度拉普拉斯方差、平均梯度。"""
+    from PIL import Image
+    try:
+        rgb = np.asarray(Image.open(io.BytesIO(b)).convert("RGB"), dtype=np.float32)
+    except Exception:  # noqa: BLE001
+        return None
+    g = 0.299 * rgb[..., 0] + 0.587 * rgb[..., 1] + 0.114 * rgb[..., 2]
+    c = g[1:-1, 1:-1]
+    lap = 4.0 * c - g[:-2, 1:-1] - g[2:, 1:-1] - g[1:-1, :-2] - g[1:-1, 2:]
+    grad = (np.abs(np.diff(g, axis=1)).mean() + np.abs(np.diff(g, axis=0)).mean()) / 2.0
+    return float(lap.var()), float(grad)
+
+
+def image_evidence(stage: str, ep: int, intervals: list, flags: list) -> dict:
+    """画面类问题的证据：哪路相机、多少帧；模糊另给实测清晰度与判定下界，让页面能说清"为什么说模糊、有多模糊"。"""
+    cams: dict[str, set] = defaultdict(set)
+    for it in intervals:
+        if it.get("issue_code") in IMAGE_CODES:
+            for st in re.split(r"[,;]", str(it.get("streams") or "")):
+                if st in CAMS:
+                    cams[it["issue_code"]].add(st)
+    if not cams:
+        return {}
+    out: dict = {}
+    thr = {}
+    try:
+        thr = json.loads((stage_dir(stage) / "report" / "thresholds_used.json").read_text(encoding="utf-8")).get("blur", {})
+    except (OSError, ValueError):
+        pass
+    p = source_path(stage, ep, "raw")
+    for code, cs in cams.items():
+        info = {"cams": sorted(cs, key=CAMS.index), "frames": {}}
+        for cam in info["cams"]:
+            tag = f"{code}@{cam}"
+            rows = [int(f["row"]) for f in flags if tag in str(f.get("streams") or "")]
+            info["frames"][cam] = len(rows)
+            if code != "C_IMAGE_BLUR" or not rows or p is None or not p.is_file() or cam not in thr:
+                continue
+            try:
+                bs = camera_bytes(p, cam)
+            except Exception:  # noqa: BLE001
+                continue
+            pick = rows[:: max(1, len(rows) // 24)][:24]
+            m = [(*x, len(bs[r])) for r in pick if 0 <= r < len(bs) and bs[r] for x in [_sharpness(bs[r])] if x]
+            if m:
+                t = thr[cam]
+                lm, gm, bm = t.get("lap_min") or 0, t.get("grad_min") or 0, t.get("byte_min") or 0
+                info.setdefault("sharp", {})[cam] = {
+                    "lap": float(np.median([x[0] for x in m])), "grad": float(np.median([x[1] for x in m])),
+                    "bytes": float(np.median([x[2] for x in m])),
+                    "lap_min": lm, "grad_min": gm, "byte_min": bm, "sampled": len(m),
+                    # 算子三条判据各命中多少（抽样帧）：两项都低 / 清晰度不到下界 1/4 / 文件体积不到下界 1/5
+                    "hit_both": sum(1 for x in m if x[0] < lm and x[1] < gm),
+                    "hit_lap4": sum(1 for x in m if x[0] < 0.25 * lm),
+                    "hit_bytes": sum(1 for x in m if x[2] < 0.2 * bm)}
+        out[code] = info
+    return out
 
 
 def motion(stage: str, ep: int) -> dict:

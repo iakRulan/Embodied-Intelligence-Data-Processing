@@ -1230,7 +1230,7 @@ async function openEpisode(stage, ep, row = 0) {
       </div>
       <div>
         <div class="sect" style="margin-top:0"><h4>${repaired ? '修复前五维评分' : '五维评分'}</h4><div class="dims">${dims.map((k) => { const v = +r[k + '_score']; return `<div class="dim"><span>${DIM_CN[k]}</span><div class="t"><i style="width:${Number.isFinite(v) ? v : 0}%"></i></div><span class="v">${Number.isFinite(v) ? fmt(v, 1) : '—'}</span></div>`; }).join('')}</div></div>
-        ${codeListHtml(codes, dict, r)}
+        ${codeListHtml(codes, dict, r, d.image_evidence)}
         <div class="sect"><h4>处理决策</h4><dl class="kv">
           <dt>治理决策</dt><dd>${esc(r.train_policy)}</dd>
           <dt>有效帧 / 训练帧</dt><dd>${fmt(+r.frame_valid)} / ${fmt(+r.train_frames)}（${r.clip_count} 段）</dd>
@@ -1300,9 +1300,10 @@ function runsOf(bools) {
   return out;
 }
 
-function codeListHtml(codes, dict, r) {
+function codeListHtml(codes, dict, r, ie = {}) {
   const details = {};
   for (const m of (r.issue_details || '').matchAll(/([A-Z]_[A-Z0-9_]+)\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g)) details[m[1]] = m[2];
+  for (const [c, x] of Object.entries(ie || {})) if (x && x.cams && details[c] != null) details[c] += ` · ${x.cams.map((k) => `${CAM_CN[k]} ${fmt(x.frames?.[k] || 0)} 帧`).join('、')}`;
   return `<div class="sect"><h4>问题码（${codes.length}）</h4><div class="code-list">${codes.length ? codes.map((c) => `<div class="code-item"><span class="code"><i style="background:var(${CAT_VAR[catOf(c)]})"></i>${esc(c)}</span>${esc(details[c] || dict[c]?.description || '')}</div>`).join('') : '<span class="muted">未命中任何问题码</span>'}</div></div>`;
 }
 
@@ -1703,7 +1704,7 @@ async function selectCase(ep, stage = 'govern', main = $('#cmpMain')) {
     }
     // 修了一部分、另一部分没修：讲清楚没修的是什么、还剩多少帧
     const remain = fixed ? remainAfterFix({ finalCodes: after, rowFinal: d.row_final_codes, dict: res.code_dict || {} }) : [];
-    if (remain.length) detail += ` 但${remain.map((c) => codeCn(c, res.code_dict)).join('、')}没有修（${reasonLabel(splitClausesJs(m.rejected || '')[0] || '') || '没有可用的修复方法'}），${(epInfo.train_frames ?? +r.train_frames) === 0 ? '整条仍然不能进入训练' : '带这些问题的帧不进入训练'}。`;
+    if (remain.length) detail += `但${remain.map((c) => codeCn(c, res.code_dict)).join('、')}没有修（${reasonLabel(splitClausesJs(m.rejected || '')[0] || '') || '没有可用的修复方法'}），${(epInfo.train_frames ?? +r.train_frames) === 0 ? '整条仍然不能进入训练' : '带这些问题的帧不进入训练'}。`;
     head = `<div class="panel cmp-head shift-head">
       <div class="cmp-title"><h2>${epName(ep)}</h2><span class="badge ${fixed ? (remain.length ? 'b-hint' : 'b-fix') : 'b-hint'}"><i></i>${fixed ? (remain.length ? '修了一部分' : '修了') : '没修'}</span><span class="verdict-line">${esc(headline)}</span></div>
       <p class="cmp-method">${esc(detail)}</p>
@@ -2289,7 +2290,7 @@ async function renderImportStory(res, box, e, imp, token) {
   const ints = d.intervals || [];
   const M = storyModel({ e, d, imp, dict: res.code_dict || {} });
   const { type, fixed, detectOnly, shift, camCn, off, keep, problem, action, evidence, keepText, scoreTxt, row, verdictCls } = M;
-  const camFig = (c) => `<figure class="story-cam ${c === shift?.cam ? 'affected' : ''}" data-cam="${c}"><img alt=""><figcaption>${CAM_CN[c]}<em class="frame-no">—</em></figcaption></figure>`;
+  const camFig = (c) => `<figure class="story-cam ${c === shift?.cam || M.cams.includes(c) ? 'affected' : ''}" data-cam="${c}"><img alt=""><figcaption>${CAM_CN[c]}${M.cams.includes(c) ? ' · 问题在这一路' : ''}<em class="frame-no">—</em></figcaption></figure>`;
   // 问题区间：每个问题码一行，合并它的所有区间；按影响帧数排序
   const byCode = {};
   for (const it of ints) (byCode[it.issue_code] = byCode[it.issue_code] || []).push(it);

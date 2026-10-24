@@ -247,6 +247,40 @@ function remainAfterFix({ finalCodes, rowFinal, blankRows, dict, shift }) {
   });
 }
 
+// 画面类问题：落在哪一路相机、有多严重。模糊给出实测清晰度与判定下界（下界 = 参考集 0.2% 分位 × 0.5，见算子 calibrate.py）
+const IMAGE_CODE_CN = { C_IMAGE_BLUR: '模糊', C_IMAGE_MOSAIC: '马赛克', C_IMAGE_SCREEN: '黑屏 / 白屏 / 低对比度', C_IMAGE_DUPLICATE: '相邻帧画面重复', C_IMAGE_SHAPE: '分辨率或通道数不符' };
+function imageNotes(d, codes, dict) {
+  const ie = d.image_evidence || {};
+  const cams = new Set(), sents = [], evidence = [];
+  let mild = false;
+  for (const c of codes || []) {
+    const x = ie[c];
+    if (!x || !x.cams || !x.cams.length) continue;
+    x.cams.forEach((k) => cams.add(k));
+    const parts = x.cams.length === 1 ? CAM_CN[x.cams[0]] : x.cams.map((k) => `${CAM_CN[k] || k}（${fmt(x.frames?.[k] || 0)} 帧）`).join('、');
+    const others = CAMS.filter((k) => !x.cams.includes(k)).map((k) => CAM_CN[k]);
+    const only = (codes || []).filter((y) => ie[y]?.cams?.length).length === 1 && (codes || []).length === 1;
+    sents.push(`${only ? '' : IMAGE_CODE_CN[c] || codeCn(c, dict)}${others.length ? `只出现在${parts}，${others.join('、')}没有这个问题` : `三路相机都有：${parts}`}`);
+    if (c !== 'C_IMAGE_BLUR' || !x.sharp) continue;
+    for (const k of x.cams) {
+      const sp = x.sharp[k];
+      if (!sp || !sp.lap_min) continue;
+      const cam = CAM_CN[k] || k;
+      if (sp.hit_bytes > 0 && sp.hit_bytes >= Math.max(sp.hit_both, sp.hit_lap4)) {
+        evidence.push([`${cam}图像文件`, `中位 ${fmt(sp.bytes / 1024, 1)} KB，不到参考集下界的 1/5（${fmt((0.2 * sp.byte_min) / 1024, 1)} KB）：压缩过度、细节丢失`, false]);
+        continue;
+      }
+      const q = sp.lap_min / 0.5;
+      const r = sp.lap / q;
+      evidence.push([`${cam}清晰度`, `中位 ${fmt(sp.lap)} < 判定下界 ${fmt(sp.lap_min)}（参考集 99.8% 的帧 ≥ ${fmt(q)}，下界取一半）`, false]);
+      const lvl = r >= 0.25 ? '轻度：整体看得清，放大后边缘发虚' : r >= 0.1 ? '中度：细节明显变软' : '重度：画面糊成一片';
+      if (r >= 0.25) mild = true;
+      evidence.push(['模糊程度', `${lvl}（清晰度约为参考集最不清晰那 0.2% 帧的 ${Math.round(r * 100)}%）`, null]);
+    }
+  }
+  return { cams: [...cams], sentence: sents.join('；'), evidence, mild };
+}
+
 function gateOf(text) {
   const cr = crossR(text), ar = armR(text);
   if (cr != null) return { r: cr, thr: 0.8, label: '跨相机运动相关' };
@@ -378,13 +412,24 @@ function storyModel({ e, d, imp = {}, dict = {} }) {
     action = '不需要修复。';
     evidence = [['检测结果', '未命中问题码', true]];
   }
+  // 画面类问题：点名是哪一路相机、有多严重（不点名的话，观众看另外两路清楚的画面会以为判错了）
+  let cams = [];
+  if (['norepair', 'refused', 'detect-only'].includes(type) && !shift) {
+    const IMG = imageNotes(d, blocking.length ? blocking : codes, dict);
+    cams = IMG.cams;
+    if (IMG.sentence) {
+      problem = problem.replace(/。$/, '') + `；${IMG.sentence}。`;
+      evidence.push(...IMG.evidence);
+      if (IMG.mild) action += '这是按参考集阈值做的判定（阈值型），程度轻，建议人工复核后再决定是否回采。';
+    }
+  }
   // 修了一部分、另一部分没修：必须讲出来，否则"修复"两个字会让人以为整条能用了
   let remain = [];
   if (fixed && !detectOnly) {
     remain = remainAfterFix({ finalCodes: e.final_codes, rowFinal: d.row_final_codes, blankRows, dict, shift });
     if (remain.length) {
       const why = m.rejected ? reasonLabel(splitClausesJs(m.rejected)[0] || '') : '没有可用的修复方法';
-      action += ` 但${remain.map((c) => codeCn(c, dict)).join('、')}没有修（${why}），${keep === 0 ? '整条仍然不能进入训练' : '带这些问题的帧不进入训练'}。`;
+      action += `但${remain.map((c) => codeCn(c, dict)).join('、')}没有修（${why}），${keep === 0 ? '整条仍然不能进入训练' : '带这些问题的帧不进入训练'}。`;
       evidence.push(['仍未修', remain.join('、'), false]);
     }
   }
@@ -408,7 +453,7 @@ function storyModel({ e, d, imp = {}, dict = {} }) {
   else if (ints.length) row = Math.min(n - 1, Math.max(0, +ints[0].start_row));
   const okType = type === 'clean' || type === 'hint' || (type === 'detect-only' && !blocking.length && !shift);
   const verdictCls = fixed && !detectOnly ? (remain.length ? 'partial' : 'fixed') : okType ? 'ok' : 'refused';
-  return { type, fixed, detectOnly, shift, camCn, off, keep, n, problem, action, evidence, keepText, scoreTxt, row, verdictCls, blankRows, blocking, codeFrames, remain };
+  return { type, fixed, detectOnly, shift, camCn, off, keep, n, problem, action, evidence, keepText, scoreTxt, row, verdictCls, blankRows, blocking, codeFrames, remain, cams };
 }
 
 // 批量导入：每条一句话
@@ -421,4 +466,4 @@ function batchDesc(e, m) {
   return codeLine({ flagged: e.flagged_frames, rows: e.rows }, e.codes);
 }
 
-if (typeof module !== 'undefined') module.exports = { storyModel, captionFor, feedFor, batchDesc, importType, blocksTraining, codeLine, fixLabel, reasonLabel, remainAfterFix, codeCn };
+if (typeof module !== 'undefined') module.exports = { storyModel, captionFor, feedFor, batchDesc, importType, blocksTraining, codeLine, fixLabel, reasonLabel, remainAfterFix, codeCn, imageNotes };
