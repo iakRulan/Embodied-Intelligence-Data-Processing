@@ -34,7 +34,11 @@ const split = (s) => String(s || '').split(';').map((x) => x.trim()).filter(Bool
 
 async function checkStage(stage) {
   const res = await get(`/api/result?stage=${stage}`);
-  if (!res || !res.episodes) { bad(stage, '-', '读不到结果', JSON.stringify(res).slice(0, 200)); return; }
+  if (!res || !res.episodes) {
+    // 记录里有、但没有可读结果的旧运行（早期版本或已清理）：跳过；明确点名的阶段读不到才算问题
+    if (!stages.includes(stage) && res && res.ok === false) { console.log(`· ${stage}: 没有可读的运行结果，跳过`); return; }
+    bad(stage, '-', '读不到结果', JSON.stringify(res).slice(0, 200)); return;
+  }
   const dict = res.code_dict || {};
   const blocks = (c) => L.blocksTraining(c, dict);
   const govern = res.kind === 'govern';

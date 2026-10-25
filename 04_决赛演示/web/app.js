@@ -1584,9 +1584,10 @@ async function selectCase(ep, stage = S.runs.govern?.id, main = $('#cmpMain')) {
     // 没有修复、也没有拒修记录：要么干净 / 只有提示，要么是没有修复手段的问题（黑屏、模糊、马赛克…）
     kind = importType(d, e, dict);
     const blocking = after.filter((c) => blocksTraining(c, dict));
-    const line = kind === 'norepair' ? `${codesText(blocking, dict)}：没有安全的修复方法`
+    const NR = noRepairNote(blocking, dict);
+    const line = kind === 'norepair' ? `${codesText(blocking, dict)}：${NR.line}`
       : kind === 'hint' ? '只有不阻断训练的提示' : '没有问题';
-    const detail = kind === 'norepair' ? '不能凭空生成画面或数据，不修；被标记的帧不进入训练。' : '不需要修复，修复前后一致。';
+    const detail = kind === 'norepair' ? (blocking.includes('C_IMAGE_COLOR') ? NR.action : '不能凭空生成画面或数据，不修；被标记的帧不进入训练。') : '不需要修复，修复前后一致。';
     head = `<div class="panel cmp-head shift-head">
       <div class="cmp-title"><h2>${epName(ep)}</h2><span class="badge ${kind === 'norepair' ? 'b-hint' : 'b-ok'}"><i></i>${kind === 'norepair' ? '没修' : '无需修复'}</span><span class="verdict-line">${esc(line)}</span></div>
       <p class="cmp-method">${esc(detail)}</p>

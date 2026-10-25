@@ -298,6 +298,19 @@ function imageNotes(d, codes, dict) {
   return { cams: [...cams], sentence: sents.join('；'), evidence, mild };
 }
 
+// 没有自动修复的阻断问题：画面类大多无法修；红蓝通道互换能换回来，但原始通道顺序无法确认，算子只写候选修复（repair.py）
+function noRepairNote(blocking, dict) {
+  const color = (blocking || []).includes('C_IMAGE_COLOR');
+  const others = (blocking || []).filter((c) => c !== 'C_IMAGE_COLOR');
+  if (!color) return { line: '没有安全的修复方法', action: '没有安全的修复方法（不能凭空生成画面或数据），不修；被标记的帧不进入训练。', cand: '' };
+  const swap = '色彩通道可以整路交换红蓝换回来，但原始通道顺序无法确认，只列为候选修复、不自动改';
+  return {
+    line: others.length ? '没有自动修复' : '只列为候选修复',
+    action: `${others.length ? `${codesText(others, dict)}没有安全的修复方法；` : ''}${swap}；被标记的帧不进入训练。`,
+    cand: '整路交换红蓝通道（R↔B）后复检，待人工确认',
+  };
+}
+
 function gateOf(text) {
   const cr = crossR(text), ar = armR(text);
   if (cr != null) return { r: cr, thr: 0.8, label: '跨相机运动相关' };
@@ -415,8 +428,10 @@ function storyModel({ e, d, imp = {}, dict = {} }) {
   } else if (type === 'norepair') {
     const show = blocking.length ? blocking : codes;
     problem = `${codesText(show, dict)}：${fmt(e.flagged_frames)} / ${fmt(n)} 帧被标记。`;
-    action = '没有安全的修复方法（不能凭空生成画面或数据），不修；被标记的帧不进入训练。';
+    const NR = noRepairNote(show, dict);
+    action = NR.action;
     evidence = [['问题', codesText(show, dict), false], ['被标记帧', `${fmt(e.flagged_frames)} / ${fmt(n)} 帧`, false]];
+    if (NR.cand) evidence.push(['候选修复', NR.cand, null]);
   } else if (type === 'hint') {
     problem = `只有不阻断训练的提示：${codes.map((c) => CODE_CN[c] || c).join('、')}。`;
     action = '这些提示不影响训练，不需要修复。';
@@ -486,4 +501,4 @@ function batchDesc(e, m) {
   return codeLine({ flagged: e.flagged_frames, rows: e.rows }, e.codes);
 }
 
-if (typeof module !== 'undefined') module.exports = { storyModel, captionFor, feedFor, batchDesc, importType, blocksTraining, codeLine, fixLabel, reasonLabel, remainAfterFix, codeCn, codesText, imageNotes, gateOf, fmt };
+if (typeof module !== 'undefined') module.exports = { noRepairNote, storyModel, captionFor, feedFor, batchDesc, importType, blocksTraining, codeLine, fixLabel, reasonLabel, remainAfterFix, codeCn, codesText, imageNotes, gateOf, fmt };
