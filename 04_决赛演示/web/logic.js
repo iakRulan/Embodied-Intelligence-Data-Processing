@@ -4,9 +4,10 @@
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-const fmt = (n, d = 0) => (n == null || Number.isNaN(n) ? '—' : Number(n).toLocaleString('zh-CN', { minimumFractionDigits: d, maximumFractionDigits: d }));
+// 非数字（null、''、'—'、NaN、Infinity）一律显示 —，不会出现 NaN
+const fmt = (n, d = 0) => { const v = typeof n === 'number' ? n : n == null || n === '' ? NaN : Number(n); return Number.isFinite(v) ? v.toLocaleString('zh-CN', { minimumFractionDigits: d, maximumFractionDigits: d }) : '—'; };
 
-const pct = (x, d = 1) => (x == null ? '—' : (x * 100).toFixed(d) + '%');
+const pct = (x, d = 1) => (x == null || !Number.isFinite(+x) ? '—' : (x * 100).toFixed(d) + '%');
 
 const epName = (e) => 'ep' + String(e).padStart(2, '0');
 
@@ -100,8 +101,8 @@ function reasonLabel(r) {
   r = (r || '').trim();
   if (/^时间戳规整/.test(r)) return '缺帧不能凭空重建时间戳';
   if (/^index 重建/.test(r)) return '帧号不连续，索引无法唯一确定';
-  if (/^时间戳/.test(r)) return '时间戳偏差不能无损还原，不按标称周期伪造时钟';
-  if (/稀疏补值/.test(r)) return 'NaN 比例超过上限，整段不臆造';
+  if (/^时间戳/.test(r)) return '时间戳偏差不能无损还原';
+  if (/稀疏补值/.test(r)) return '空值比例超过补值上限';
   if (/越界/.test(r)) return '连续越界不是孤立突跳，不插值';
   if (/必需字段缺失/.test(r)) return '必需字段缺失，文件级隔离';
   if (/重对齐/.test(r)) return '相机错位缺少内容证据，不移动画面';
@@ -152,25 +153,24 @@ function captionFor(ev, kind) {
       if (shift) what = `${CAM_CN[shift.cam] || shift.cam}画面整体错位 ${signed(shift.frames)} 帧 → 已移回`;
       else if (ev.meta_patch) what = '元数据记录长度不符 → 只更新元数据';
       else what = fixLabel({ applied: b.applied || '' });
-      const score = ev.score != null && ev.final_score != null ? `复检 ${fmt(ev.score, 2)} → ${fmt(ev.final_score, 2)} 分` : '';
       const done = ev.meta_patch && !ev.repaired ? 'Parquet 不改' : ev.cells ? `改写 ${fmt(ev.cells)} 格` : '数值逐位不变';
       const left = finalCodes.filter((c) => blocksTraining(c)).filter((c) => !(shift && BLANK_CODES.has(c)));
-      return { text: `${ep} · ${what}`, meta: [done, score, left.length ? `仍有 ${left.length} 类阻断问题没修，相关帧不进入训练` : ''].filter(Boolean).join(' · ') };
+      return { text: `${ep} · ${what}`, meta: [done, left.length ? `仍有 ${left.length} 类问题没修，相关帧不进入训练` : ''].filter(Boolean).join(' · ') };
     }
     if (b.rejected || ev.rejected) {
       const r = crossR(b.rejected);
       const why = reasonLabel((b.rejected || '').split('；')[0]);
       const s = shift ? `${CAM_CN[shift.cam] || shift.cam}疑似错位 ${signed(shift.frames)} 帧` : why;
       const evidence = shift ? (r != null ? `跨相机相关只有 ${r.toFixed(2)}，低于 0.80` : '画面内容证据不足') : '证据不足';
-      return { text: `${ep} · ${s} → 拒修`, meta: `${evidence} · 保持原样，问题段不进入训练` };
+      return { text: `${ep} · ${s} → 拒修`, meta: `${evidence} · 问题段不进入训练` };
     }
-    if (!finalCodes.length) return { text: `${ep} · 通过`, meta: `${fmt(ev.rows)} 行，复检未命中问题` };
-    if (!finalCodes.some((c) => blocksTraining(c))) return { text: `${ep} · ${codeLine(ev, finalCodes, shift)}`, meta: '只有不阻断训练的提示，保持原样' };
-    return { text: `${ep} · ${codeLine(ev, finalCodes, shift)}`, meta: '这类问题没有可用的修复方法，保持原样；问题帧不进入训练' };
+    if (!finalCodes.length) return { text: `${ep} · 通过`, meta: `${fmt(ev.rows)} 帧，无问题` };
+    if (!finalCodes.some((c) => blocksTraining(c))) return { text: `${ep} · ${codeLine(ev, finalCodes, shift)}`, meta: '只有提示，不影响训练' };
+    return { text: `${ep} · ${codeLine(ev, finalCodes, shift)}`, meta: '没有修复方法 · 问题帧不进入训练' };
   }
-  if (!codes.length) return { text: `${ep} · 未命中问题`, meta: `${fmt(ev.rows)} 行 · ${fmt(ev.seconds, 2)} 秒` };
-  const marked = ev.flagged ? `${fmt(ev.flagged)} 行被标记` : '整条轨迹级问题';
-  return { text: `${ep} · ${codeLine(ev, codes, shift)}`, meta: `${marked} · 共 ${fmt(ev.rows)} 行 · ${fmt(ev.seconds, 2)} 秒` };
+  if (!codes.length) return { text: `${ep} · 未命中问题`, meta: `${fmt(ev.rows)} 帧 · ${fmt(ev.seconds, 2)} 秒` };
+  const marked = ev.flagged ? `${fmt(ev.flagged)} / ${fmt(ev.rows)} 帧有问题` : '整条级问题';
+  return { text: `${ep} · ${codeLine(ev, codes, shift)}`, meta: `${marked} · ${fmt(ev.seconds, 2)} 秒` };
 }
 
 function runsText(rows, max = 4) {
@@ -322,7 +322,7 @@ function storyModel({ e, d, imp = {}, dict = {} }) {
     const where = !k ? '' : blankRows[k - 1] === k - 1 ? '开头' : blankRows[0] === n - k ? '结尾' : runsText(blankRows);
     const gate = gateOf(text);
     problem = `同一行里，${camCn}的画面和机械臂状态差了 ${Math.abs(off)} 帧（整条恒定）。`;
-    action = `把 ${fmt(moved)} 帧画面移回对应的行；${k ? `${where} ${fmt(k)} 帧这路相机没拍到，显式置空，不合成任何画面。` : '没有需要置空的行。'}`;
+    action = `把 ${fmt(moved)} 帧画面移回对应的行；${k ? `${where} ${fmt(k)} 帧这路相机没拍到，显式置空。` : '没有需要置空的行。'}`;
     evidence = [
       ['path 偏移', `${signed(off)} 帧，整条恒定`, true],
       gate ? [gate.label, `r = ${gate.r.toFixed(2)} ${gate.r >= gate.thr ? '≥' : '<'} ${gate.thr.toFixed(2)}`, gate.r >= gate.thr] : ['内容证据', '见修复说明', null],
@@ -331,7 +331,7 @@ function storyModel({ e, d, imp = {}, dict = {} }) {
   } else if (type === 'shift-refused') {
     const cr = crossR(text), ar = armR(text);
     problem = `${camCn}的画面疑似整体错了 ${Math.abs(off)} 帧，但画面内容没有给出足够的对应证据。`;
-    action = '没修。整条保持原样，带问题的帧不进入训练，不让伪同步的画面混进去。';
+    action = '没修：内容证据不足，带问题的帧不进入训练。';
     evidence = [['path 偏移', `${signed(off)} 帧（只是索引，不是内容证据）`, null]];
     if (cr != null) evidence.push(['跨相机运动相关', `r = ${cr.toFixed(2)} ${cr >= 0.8 ? '≥' : '<'} 0.80`, cr >= 0.8]);
     if (ar != null) evidence.push(['本臂运动相关', `r = ${ar.toFixed(2)} ${ar >= 0.6 ? '≥' : '<'} 0.60`, ar >= 0.6]);
@@ -339,17 +339,20 @@ function storyModel({ e, d, imp = {}, dict = {} }) {
   } else if (type === 'detect-only') {
     if (!codes.length && !shift) {
       problem = '这条数据没有检测到问题。';
-      action = '本次只检测；没有需要修复的地方。';
-      evidence = [['检测结果', '未命中问题码', true]];
+      action = '不需要修复。';
+      evidence = [['检测结果', '无问题', true]];
     } else if (!blocking.length && !shift) {
       problem = `只有不阻断训练的提示：${codes.map((c) => CODE_CN[c] || c).join('、')}。`;
-      action = '本次只检测；这些提示不阻断训练。';
-      evidence = [['检测结论', codes.join('、'), null]];
+      action = '这些提示不阻断训练。';
+      evidence = [['提示', codesText(codes, dict), null]];
     } else {
       problem = shift ? `同一行里，${camCn}的画面和机械臂状态差了 ${Math.abs(off)} 帧。`
         : `${codesText(blocking.length ? blocking : codes, dict)}。`;
-      action = '本次选择只检测，没有生成修复副本；带阻断问题的帧不进入训练。';
-      evidence = [['检测结论', codes.join('、'), false], ['修复', '未执行（只检测）', null], ...(shift ? [['path 偏移', `${signed(off)} 帧`, null]] : [])];
+      action = '不修复时，带问题的帧不进入训练。';
+      evidence = [['问题', codesText(blocking.length ? blocking : codes, dict), false],
+        ['问题帧', e.flagged_frames ? `${fmt(e.flagged_frames)} / ${fmt(n)} 帧` : '整条', false],
+        ['不修复时可训练', `${fmt(keep)} 帧`, null],
+        ...(shift ? [['path 偏移', `${signed(off)} 帧`, null]] : [])];
     }
   } else if (type === 'cells') {
     const rows = [...new Set(audit.map((a) => +a.row))];
@@ -357,7 +360,7 @@ function storyModel({ e, d, imp = {}, dict = {} }) {
     const dims = (raw.state?.[0]?.length || 20) + (raw.actions?.[0]?.length || 20);
     const unchanged = isVec ? n * dims - audit.length : null;
     if (codes.includes('J_STATE_NONFINITE')) {
-      problem = `state 里有 ${fmt(audit.length)} 个空值（NaN/Inf）。这些格直接进训练会让损失变成 NaN。`;
+      problem = `state 里有 ${fmt(audit.length)} 个空值（NaN/Inf）。`;
       action = `只补这 ${fmt(audit.length)} 格：Rotation-6D 按正交约束解出，其余分量逐位不变。`;
     } else if (codes.includes('J_POSITION_ENVELOPE')) {
       problem = `末端位置有 ${fmt(audit.filter((a) => /^state\[/.test(a.field)).length || audit.length)} 个孤立越界值。`;
@@ -395,12 +398,12 @@ function storyModel({ e, d, imp = {}, dict = {} }) {
   } else if (type === 'norepair') {
     const show = blocking.length ? blocking : codes;
     problem = `${codesText(show, dict)}：${fmt(e.flagged_frames)} / ${fmt(n)} 帧被标记。`;
-    action = '这类问题没有安全的修复方法（不能凭空生成画面或数据），不修；被标记的帧不进入训练。';
-    evidence = [['检测结论', show.join('、'), false], ['被标记帧', `${fmt(e.flagged_frames)} / ${fmt(n)} 帧`, false], ['修复', '不在可修复范围，保持原样', null]];
+    action = '没有安全的修复方法（不能凭空生成画面或数据），不修；被标记的帧不进入训练。';
+    evidence = [['问题', codesText(show, dict), false], ['被标记帧', `${fmt(e.flagged_frames)} / ${fmt(n)} 帧`, false]];
   } else if (type === 'hint') {
     problem = `只有不阻断训练的提示：${codes.map((c) => CODE_CN[c] || c).join('、')}。`;
     action = '这些提示不影响训练，不需要修复。';
-    evidence = [['检测结论', codes.join('、'), null]];
+    evidence = [['提示', codesText(codes, dict), null]];
   } else if (type === 'refused') {
     const show = blocking.length ? blocking : codes;
     problem = `${codesText(show, dict)}${e.flagged_frames ? `：${fmt(e.flagged_frames)} / ${fmt(n)} 帧被标记` : '（整条轨迹级问题）'}。`;
@@ -410,7 +413,7 @@ function storyModel({ e, d, imp = {}, dict = {} }) {
   } else {
     problem = '这条数据没有检测到问题。';
     action = '不需要修复。';
-    evidence = [['检测结果', '未命中问题码', true]];
+    evidence = [['检测结果', '无问题', true]];
   }
   // 画面类问题：点名是哪一路相机、有多严重（不点名的话，观众看另外两路清楚的画面会以为判错了）
   let cams = [];
@@ -420,7 +423,7 @@ function storyModel({ e, d, imp = {}, dict = {} }) {
     if (IMG.sentence) {
       problem = problem.replace(/。$/, '') + `；${IMG.sentence}。`;
       evidence.push(...IMG.evidence);
-      if (IMG.mild) action += '这是按参考集阈值做的判定（阈值型），程度轻，建议人工复核后再决定是否回采。';
+      if (IMG.mild) action += '程度轻，建议人工复核。';
     }
   }
   // 修了一部分、另一部分没修：必须讲出来，否则"修复"两个字会让人以为整条能用了
@@ -442,7 +445,7 @@ function storyModel({ e, d, imp = {}, dict = {} }) {
     const blankOut = blankRows.filter((i) => !(mask[i] && mask[i].keep)).length;
     const other = Math.max(0, notKeep - blankOut);
     keepText = `${fmt(blankOut)} 帧修复后这路相机没有画面，不进入训练${other ? `；另有 ${fmt(other)} 帧复检后仍有阻断问题，或不足 30 帧连续` : ''}；其余 ${fmt(keep)} 帧可用。`;
-  } else keepText = `${fmt(notKeep)} 帧不进入训练：复检后仍有阻断问题，或不足 30 帧连续。`;
+  } else keepText = `${fmt(notKeep)} 帧不进入训练：${detectOnly ? '带阻断问题' : '复检后仍有阻断问题'}，或不足 30 帧连续。`;
   const sb = m.score_before != null && m.score_before !== '' ? +m.score_before : e.score;
   const sa = m.score_after != null && m.score_after !== '' ? +m.score_after : e.final_score;
   const scoreTxt = detectOnly ? `检测评分 ${fmt(sb, 2)} 分 · 未修复` : fixed ? `复检 ${fmt(sb, 2)} → <b>${fmt(sa, 2)}</b> 分` : `复检 ${fmt(sb, 2)} 分 · 保持原样`;
@@ -466,4 +469,4 @@ function batchDesc(e, m) {
   return codeLine({ flagged: e.flagged_frames, rows: e.rows }, e.codes);
 }
 
-if (typeof module !== 'undefined') module.exports = { storyModel, captionFor, feedFor, batchDesc, importType, blocksTraining, codeLine, fixLabel, reasonLabel, remainAfterFix, codeCn, imageNotes };
+if (typeof module !== 'undefined') module.exports = { storyModel, captionFor, feedFor, batchDesc, importType, blocksTraining, codeLine, fixLabel, reasonLabel, remainAfterFix, codeCn, codesText, imageNotes, gateOf, fmt };

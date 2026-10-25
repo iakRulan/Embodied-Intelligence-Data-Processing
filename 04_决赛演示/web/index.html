@@ -13,68 +13,63 @@
     <span class="brand-sub">具身智能多模态数据质量检测与安全治理</span>
   </div>
   <nav class="steps" id="steps" aria-label="演示步骤">
-    <button data-step="1"><b>1</b>检测</button>
-    <button data-step="2"><b>2</b>修复</button>
-    <button data-step="3"><b>3</b>对比</button>
-    <button data-step="4"><b>4</b>导入测试</button>
+    <button data-step="1"><b>1</b>导入数据</button>
+    <button data-step="2"><b>2</b>检测</button>
+    <button data-step="3"><b>3</b>修复</button>
+    <button data-step="4"><b>4</b>对比</button>
   </nav>
   <div class="top-right">
-    <div class="seg" id="modeSeg" role="radiogroup" aria-label="运行方式">
-      <button data-mode="live" class="on" role="radio" aria-checked="true">实时运行</button>
-      <button data-mode="replay" role="radio" aria-checked="false">回放</button>
-    </div>
+    <div class="cur" id="curChip" hidden></div>
     <button class="icon-btn" id="themeBtn" title="切换明暗（T）" aria-label="切换明暗">◐</button>
   </div>
 </header>
 
 <main id="app">
-  <!-- 1 检测 / 2 修复（共用运行面板） -->
+  <!-- 1 导入数据：示例数据 / 我的数据 / 历史结果，选好后一键开始检测 -->
   <section class="view" data-view="1">
-    <div class="run-shell" data-stage="detect"></div>
-  </section>
-  <section class="view" data-view="2">
-    <div class="run-shell" data-stage="govern"></div>
+    <div class="data-grid">
+      <section class="panel card ex" id="exCard">
+        <div class="ex-head">
+          <div><span class="kicker">示例数据</span><h2 id="exTitle">赛题公开测试集</h2><p class="ex-figs" id="exFigs"></p></div>
+          <button class="src-all" id="exAll"></button>
+        </div>
+        <div class="ex-pick-h"><span>或指定一条</span><span class="ex-legend" id="exLegend"></span></div>
+        <div class="ex-grid" id="exGrid"></div>
+      </section>
+      <aside class="data-side">
+        <section class="panel card">
+          <span class="kicker">我的数据</span>
+          <div class="imp-btns">
+            <button class="ghost" id="impPickDir">选择文件夹</button>
+            <button class="ghost" id="impPickFile">选择文件</button>
+          </div>
+          <div class="drop" id="impDrop" tabindex="0">拖入 .parquet 文件或文件夹</div>
+          <div class="imp-path"><input id="impPath" type="text" placeholder="或粘贴路径，回车" spellcheck="false" aria-label="数据路径"></div>
+          <input type="file" id="impFileInput" accept=".parquet" hidden>
+          <input type="file" id="impDirInput" webkitdirectory multiple hidden>
+          <div id="impMsg" class="imp-msg"></div>
+        </section>
+        <section class="panel card">
+          <span class="kicker">历史结果</span>
+          <div id="histList" class="hist-list"></div>
+        </section>
+      </aside>
+    </div>
+    <div class="selbar panel" id="selBar" hidden>
+      <div class="sel-info" id="selInfo"></div>
+      <button class="cta" id="selGo">开始检测 →</button>
+    </div>
   </section>
 
-  <!-- 3 对比 -->
-  <section class="view" data-view="3">
+  <!-- 2 检测 / 3 修复（共用运行面板） -->
+  <section class="view" data-view="2"><div class="run-shell" data-stage="detect"></div></section>
+  <section class="view" data-view="3"><div class="run-shell" data-stage="govern"></div></section>
+
+  <!-- 4 对比 -->
+  <section class="view" data-view="4">
     <div class="cmp-grid">
       <aside class="cmp-list panel" id="cmpList"></aside>
       <div class="cmp-main" id="cmpMain"></div>
-    </div>
-  </section>
-  <!-- 4 导入测试：用自己的数据走一遍检测、修复、对比 -->
-  <section class="view" data-view="4">
-    <div class="run-head"><div class="run-title"><h2>四、导入测试</h2>
-      <p>用您自己的数据走一遍同样的流程：检测 → 修复 → 修复前后对比。单个 Parquet 看单条细节，文件夹批量测试；原始数据只读，结果单独保存并可回看。</p></div></div>
-    <div class="imp-grid">
-      <aside class="imp-side">
-        <div class="panel card">
-          <div class="step-h"><b>1</b>选择数据</div>
-          <div class="imp-btns">
-            <button class="ghost" id="impPickFile">选择单个文件</button>
-            <button class="ghost" id="impPickDir">选择文件夹</button>
-          </div>
-          <div class="drop" id="impDrop" tabindex="0"><span>把 .parquet 文件或数据集文件夹拖到这里</span><small>拖入的文件会先复制到本次测试目录</small></div>
-          <div class="imp-path"><input id="impPath" type="text" placeholder="或粘贴路径后回车" spellcheck="false" aria-label="数据路径"><button class="ghost sm" id="impCheck">读取</button></div>
-          <input type="file" id="impFileInput" accept=".parquet" hidden>
-          <input type="file" id="impDirInput" webkitdirectory multiple hidden>
-          <div id="impSel" class="imp-sel"></div>
-        </div>
-        <div class="panel card">
-          <div class="step-h"><b>2</b>处理方式</div>
-          <div class="seg imp-mode" id="impMode" role="radiogroup"><button data-m="govern" class="on">检测 + 修复</button><button data-m="detect">只检测</button></div>
-          <button class="cta imp-run" id="impRun" disabled>开始测试</button>
-        </div>
-        <div class="panel card">
-          <div class="step-h"><b>3</b>测试记录</div>
-          <div id="impHist" class="imp-hist"></div>
-        </div>
-      </aside>
-      <div class="imp-main">
-        <div class="panel empty" id="impEmpty"><h3>先在左侧选择要测试的数据</h3><p>单个文件适合现场挑一条轨迹看细节；文件夹会把其中所有 Parquet 一次性批量检测。</p></div>
-        <div class="run-shell" data-stage="import" hidden></div>
-      </div>
     </div>
   </section>
 </main>
@@ -88,7 +83,7 @@
   </div>
 </div>
 
-<!-- 文件预览 / 明细 -->
+<!-- 明细 / 预览 -->
 <div class="modal" id="modal" hidden>
   <div class="drawer-scrim" data-close></div>
   <div class="modal-body" role="dialog" aria-modal="true">
@@ -102,20 +97,15 @@
 
 <template id="runTpl">
   <div class="run-head">
-    <div class="run-title">
-      <h2 class="rt-name"></h2>
-      <p class="rt-desc"></p>
-    </div>
-    <div class="run-actions">
-      <button class="cta run-btn"></button>
-      <code class="cli" title="等价命令行"></code>
-    </div>
+    <div class="run-title"><h2 class="rt-name"></h2><span class="rt-data"></span></div>
+    <div class="run-actions"><button class="cta run-btn"></button></div>
   </div>
+  <div class="run-empty panel empty" hidden><h3>先选择要处理的数据</h3><button class="cta" data-goto="1">去导入数据</button></div>
   <div class="run-body">
     <div class="meter panel">
-      <div class="clock"><span class="clock-v">0.00</span><span class="clock-u">秒</span></div>
+      <div class="clock" title=""><span class="clock-v">0.00</span><span class="clock-u">秒</span></div>
       <div class="clock-sub">算子计时</div>
-      <div class="prog"><div class="prog-bar"><i></i></div><div class="prog-t"><b class="pk">0</b> / <span class="pn">89</span> 条轨迹</div></div>
+      <div class="prog"><div class="prog-bar"><i></i></div><div class="prog-t"><b class="pk">0</b> / <span class="pn">0</span> 条</div></div>
       <dl class="counters">
         <div><dt>已读数据行</dt><dd class="c-rows">0</dd></div>
         <div><dt>已解码图像</dt><dd class="c-img">0</dd></div>
@@ -124,25 +114,21 @@
       </dl>
       <ol class="phases"></ol>
       <div class="live-cats"></div>
-      <div class="console" aria-live="polite"></div>
     </div>
     <div class="board panel">
       <div class="board-head">
-        <div><h3 class="bh-title">逐帧检测全景</h3><p class="bh-sub"></p></div>
+        <h3 class="bh-title">逐帧检测全景</h3>
         <div class="legend live-legend"></div>
       </div>
       <div class="live-caption" aria-live="polite">
         <span class="lc-k">实时</span>
-        <div class="lc-body">
-          <b class="lc-text">等待第一条轨迹完成…</b>
-          <span class="lc-meta">运行开始后，这里会用一句话说明每条轨迹查出了什么</span>
-        </div>
+        <div class="lc-body"><b class="lc-text">等待开始</b><span class="lc-meta"></span></div>
       </div>
       <div class="live-status"></div>
       <div class="live-grid">
         <div class="live-pano">
           <div class="pano-wrap"><canvas data-live></canvas></div>
-          <div class="lp-axis"><span>每行一条轨迹 · 每格一帧 · 左侧色条 = 轨迹状态</span><span class="lp-n"></span></div>
+          <div class="lp-axis"><span>每行一条 · 每格一帧</span><span class="lp-n"></span></div>
         </div>
         <div class="feed-col">
           <div class="mini-h feed-h">逐条发现</div>

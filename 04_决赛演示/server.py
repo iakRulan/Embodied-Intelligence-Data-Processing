@@ -14,7 +14,9 @@
   GET  /api/motion?stage=..&ep=N         画面运动能量 vs 机械臂速度（相机重对齐证据）
   GET  /api/artifacts?stage=..  /api/preview?stage=..&path=..  POST /api/open?stage=..&path=..
   GET  /api/repairs?stage=..             修复说明：方法与条件、逐条修复、拒修与候选方案
-  导入测试（stage = imp-…）
+  GET  /api/sessions                     历史结果：按数据分组，最近一次检测 / 修复
+  GET  /api/export?stage=..&what=train|report|review   可用数据包 / 质检报告 / 复核清单
+  导入数据（每次运行一个 stage = imp-…；页面流程：导入数据 → 检测 → 修复 → 对比）
   POST /api/import/pick?kind=file|folder 系统选择框（macOS）
   GET  /api/import/inspect?path=..       识别单个文件 / 数据集 / 普通文件夹 / 多个数据集
   PUT  /api/import/upload?token=..&path=.. 浏览器拖放上传（逐个文件）
@@ -186,6 +188,77 @@ def is_govern(stage: str) -> bool:
 
 def has_run(stage: str) -> bool:
     return (stage_dir(stage) / "report" / "summary.json").is_file()
+
+
+# ----------------------------------------------------------------- runs grouped by input（同一份数据的检测 / 修复）
+def _norm(p) -> str:
+    try:
+        return str(Path(os.path.expanduser(str(p))).resolve())
+    except (OSError, RuntimeError):
+        return str(p)
+
+
+def stage_key(stage: str) -> str:
+    """这次运行处理的是哪份数据（文件或文件夹）的规范化路径。"""
+    if is_import(stage):
+        return _norm(_IMP[stage]["input"])
+    return _norm(INPUT)
+
+
+def is_example(key: str) -> bool:
+    ex = _norm(INPUT)
+    return key == ex or key.startswith(ex + os.sep)
+
+
+def run_meta(stage: str) -> dict | None:
+    """一次成功运行的身份信息：时间、算子版本、数据、条数。"""
+    if not has_run(stage):
+        return None
+    sp = stage_dir(stage) / "report" / "summary.json"
+
+    def build(d: Path):
+        try:
+            s = json.loads(sp.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            s = {}
+        return {"version": s.get("operator"), "episodes": (s.get("scope") or {}).get("episodes"),
+                "rows": (s.get("scope") or {}).get("rows")}
+    m = cached(stage, "meta", build)
+    ts = sp.stat().st_mtime
+    rec = _IMP.get(stage, {}) if is_import(stage) else {}
+    return {"id": stage, "repair": is_govern(stage), "ts": ts, "created": time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)),
+            "version": m.get("version"), "episodes": m.get("episodes"), "rows": m.get("rows"), "key": stage_key(stage),
+            "kind": rec.get("kind") or "dataset", "name": rec.get("name") or INPUT.name,
+            "replayable": (stage_dir(stage) / "demo_events.jsonl").is_file()}
+
+
+def all_runs() -> list[dict]:
+    with _IMP_LOCK:
+        ids = [k for k, r in _IMP.items() if r.get("status") == "ok"]
+    out = [m for m in (run_meta(s) for s in list(STAGES) + ids) if m]
+    return sorted(out, key=lambda m: -m["ts"])
+
+
+def latest_run(key: str, repair: bool, version: str | None = None, exclude: str | None = None) -> dict | None:
+    for m in all_runs():
+        if m["key"] == key and m["repair"] == repair and m["id"] != exclude and (version is None or m["version"] == version):
+            return m
+    return None
+
+
+def sessions() -> dict:
+    """历史结果：按数据分组，每份数据取最近一次检测、最近一次修复。"""
+    groups: dict[str, dict] = {}
+    for m in all_runs():
+        g = groups.setdefault(m["key"], {"key": m["key"], "kind": m["kind"], "name": m["name"], "episodes": m["episodes"],
+                                         "example": is_example(m["key"]), "ts": m["ts"], "detect": None, "govern": None})
+        slot = "govern" if m["repair"] else "detect"
+        if g[slot] is None:
+            g[slot] = {k: m[k] for k in ("id", "created", "version", "replayable")}
+    items = sorted(groups.values(), key=lambda g: -g["ts"])
+    for g in items:
+        g["created"] = time.strftime("%Y-%m-%d %H:%M", time.localtime(g["ts"]))
+    return clean({"ok": True, "items": items})
 
 
 # ----------------------------------------------------------------- jobs
@@ -452,9 +525,42 @@ def run_brief(stage: str) -> dict | None:
             "replayable": (d / "demo_events.jsonl").is_file()}
 
 
+_EXAMPLE: dict = {}
+
+
+def example_info() -> dict:
+    """示例数据（demo_config 里的测试集）：每条轨迹的文件、帧数；有检测结果时附上状态，方便现场挑一条。"""
+    files = sorted((INPUT / "data").rglob("*.parquet")) if (INPUT / "data").exists() else []
+    sig = (str(INPUT), len(files))
+    if _EXAMPLE.get("sig") != sig:
+        eps = []
+        for f, ep in zip(files, _episode_ids(files)):
+            try:
+                rows = pq.ParquetFile(f).metadata.num_rows
+            except Exception:  # noqa: BLE001
+                rows = None
+            eps.append({"id": ep, "path": str(f), "rows": rows, "bytes": f.stat().st_size})
+        _EXAMPLE.clear()
+        _EXAMPLE.update({"sig": sig, "episodes": eps})
+    eps = [dict(e) for e in _EXAMPLE["episodes"]]
+    runs = [m for m in all_runs() if m["key"] == _norm(INPUT)]
+    last = runs[0] if runs else None
+    gov = next((m for m in runs if m["repair"]), None)
+    st = episode_rows(last["id"]) if last else {}
+    gv = episode_rows(gov["id"]) if gov else {}
+    for e in eps:
+        if e["id"] in st:
+            e["status"] = st[e["id"]].get("status")
+        if e["id"] in gv:
+            e["fixed"] = bool(gv[e["id"]].get("repaired_file"))
+    return {"path": str(INPUT), "label": CFG.get("dataset_label", "测试集"), "episodes": eps,
+            "rows": sum(e["rows"] or 0 for e in eps), "bytes": sum(e["bytes"] for e in eps)}
+
+
 def api_info() -> dict:
     return clean({
         "dataset": dataset_info(),
+        "example": example_info(),
         "runs": {s: run_brief(s) for s in STAGES},
         "host": {"platform": platform.platform(), "cpu": os.cpu_count(), "python": sys.version.split()[0]},
         "operator_dir": str(OPERATOR),
@@ -639,18 +745,27 @@ def build_result(stage: str) -> dict:
         res["candidates"] = read_csv(g / "repair_candidates.csv") if (g / "repair_candidates.csv").exists() else []
         res["audit_counts"] = dict(Counter(a["episode_index"] for a in read_csv(g / "repair_audit.csv"))) if (g / "repair_audit.csv").exists() else {}
         res["duplicates"] = read_csv(d / "report" / "duplicate_pairs.csv") if (d / "report" / "duplicate_pairs.csv").exists() else []
-        if stage == "govern" and has_run("detect"):
+        # 同一份数据、同一版算子的"只检测"运行：给出 不修不切 / 只切段 / 切段 + 修复 三档的真实对照
+        pair = latest_run(stage_key(stage), False, s.get("operator"))
+        if pair:
             try:
-                ds = json.loads((stage_dir("detect") / "report" / "summary.json").read_text(encoding="utf-8"))
-                res["detect_only_train_frames"] = ds.get("governance", {}).get("train_frames", {}).get("total")
-                res["detect_only_policy"] = ds.get("governance", {}).get("policy_counts")
+                ds = json.loads((stage_dir(pair["id"]) / "report" / "summary.json").read_text(encoding="utf-8"))
+                tf0 = (ds.get("governance") or {}).get("train_frames") or {}
+                res["detect_pair"] = pair["id"]
+                res["detect_only_train_frames"] = tf0.get("total")
+                res["detect_only_base"] = tf0.get("原本可用")
+                res["detect_only_policy"] = (ds.get("governance") or {}).get("policy_counts")
+                res["detect_ep_train"] = {str(k): int(fnum(v.get("train_frames"), 0) or 0) for k, v in episode_rows(pair["id"]).items()}
             except (OSError, ValueError):
                 pass
-        res["compare"] = before_after(stage, s, eps, res.get("detect_only_train_frames"))
+        res["compare"] = before_after(stage, s, eps, res.get("detect_only_train_frames"), res.get("detect_only_base"))
+    res["run"] = run_meta(stage)
+    if res["run"]:
+        res["run"]["example"] = is_example(res["run"]["key"])
     return clean(res)
 
 
-def before_after(stage: str, s: dict, eps: dict[int, dict], detect_only_total=None) -> dict:
+def before_after(stage: str, s: dict, eps: dict[int, dict], detect_only_total=None, detect_only_base=None) -> dict:
     """修复前（原始检测）vs 修复后（对修复副本重新检测）。全部来自算子自己的输出，不需要任何真值标签。"""
     ff = frame_rows(stage)
     blocks = {c: m.get("blocks_training") == "True" for c, m in code_dictionary(stage).items()}
@@ -715,7 +830,9 @@ def before_after(stage: str, s: dict, eps: dict[int, dict], detect_only_total=No
         "cat_rows_before": dict(cat_b), "cat_rows_after": dict(cat_a),
         "cat_eps_before": dict(cat_ep_b), "cat_eps_after": dict(cat_ep_a),
         "score_mean_before": mean(sc_b), "score_mean_after": mean(sc_a),
-        "train_base": tf.get("原本可用", 0) if tf else None, "train_detect_only": detect_only_total, "train_total": tf.get("total"),
+        # 不修不切的基线取"只检测"那次运行（修复运行里，被补丁过的整段可用轨迹会记到"修复恢复"）
+        "train_base": detect_only_base if detect_only_base is not None else (tf.get("原本可用", 0) if tf else None),
+        "train_detect_only": detect_only_total, "train_total": tf.get("total"),
         "train_parts": {k: v for k, v in tf.items() if k != "total"},
         "codes": code_rows, "changed": changed,
     }
@@ -1409,8 +1526,15 @@ def inspect_path(raw: str) -> dict:
     files = _parquets(target)
     if not files:
         return {"ok": False, "error": "这个文件夹里没有 .parquet 文件"}
+    rows = 0
+    for f in files:
+        try:
+            rows += pq.ParquetFile(f).metadata.num_rows
+        except Exception:  # noqa: BLE001
+            pass
     return clean({"ok": True, "kind": "dataset" if roots else "folder", "path": str(target), "name": target.name,
                   "picked": str(p), "episodes": len(files), "ids": _episode_ids(files), "bytes": sum(f.stat().st_size for f in files),
+                  "rows": rows,
                   "has_meta": bool(roots), "meta": _meta_brief(target) if roots else {},
                   "sample": [str(f.relative_to(target)) for f in files[:5]]})
 
@@ -1493,7 +1617,8 @@ def run_import(job: Job, rec: dict) -> None:
             if ok:
                 s = json.loads((out / "report" / "summary.json").read_text(encoding="utf-8"))
                 t, det, gov = s.get("timing", {}), s.get("detection", {}), s.get("governance", {})
-                rec.update({"episodes": t.get("episodes"), "rows": t.get("rows"), "seconds": t.get("total_seconds_incl_all_csv_parquet_outputs"),
+                rec.update({"version": s.get("operator"),
+                            "episodes": t.get("episodes"), "rows": t.get("rows"), "seconds": t.get("total_seconds_incl_all_csv_parquet_outputs"),
                             "flagged": det.get("flagged_episodes"), "flagged_frames": det.get("flagged_frames"),
                             "repaired": gov.get("parquet_repaired_copies"), "meta_patch": gov.get("meta_patch_only"),
                             "train_frames": (gov.get("train_frames") or {}).get("total"), "headline": s.get("headline")})
@@ -1503,6 +1628,8 @@ def run_import(job: Job, rec: dict) -> None:
         if not ok:
             job.push({"type": "error", "msg": rec.get("error")})
         invalidate(rec["id"])
+        if ok:
+            prune_runs(rec)
         job.finish(ok)
     except Exception as exc:  # noqa: BLE001
         with _IMP_LOCK:
@@ -1510,6 +1637,29 @@ def run_import(job: Job, rec: dict) -> None:
             _save_imports()
         job.push({"type": "error", "msg": rec["error"]})
         job.finish(False)
+
+
+KEEP_RUNS = 3
+
+
+def prune_runs(rec: dict) -> None:
+    """同一份数据、同一种运行（检测 / 修复）只保留最近 3 次结果，避免反复排练把磁盘写满。
+    只清理本页面新流程产生的运行（flow=2），且只删 runs/imports 下由本服务创建的目录。"""
+    key, repair = _norm(rec["input"]), bool(rec.get("repair"))
+    with _IMP_LOCK:
+        same = sorted((r for r in _IMP.values() if r.get("flow") == 2 and r.get("status") == "ok"
+                       and bool(r.get("repair")) == repair and _norm(r["input"]) == key),
+                      key=lambda r: r["created"], reverse=True)
+        old = same[KEEP_RUNS:]
+        for r in old:
+            _IMP.pop(r["id"], None)
+        if old:
+            _save_imports()
+    for r in old:
+        d = IMPORTS / r["id"]
+        if d.is_dir() and IMPORTS.resolve() in d.resolve().parents:
+            shutil.rmtree(d, ignore_errors=True)
+        invalidate(r["id"])
 
 
 def start_import(body: dict) -> dict:
@@ -1528,7 +1678,7 @@ def start_import(body: dict) -> dict:
         input_path = Path(info["path"])
         rec = {"id": iid, "created": time.strftime("%Y-%m-%d %H:%M:%S"), "source": body.get("source") or info.get("picked") or info["path"],
                "input": info["path"], "root": info.get("root") or info["path"], "kind": info["kind"], "name": info["name"],
-               "repair": bool(body.get("repair", True)), "status": "running", "ids": info.get("ids"),
+               "repair": bool(body.get("repair", True)), "status": "running", "ids": info.get("ids"), "flow": 2,
                "uploaded": bool(body.get("uploaded")), "out": str(_import_out(input_path, iid))}
         with _IMP_LOCK:
             _IMP[iid] = rec
@@ -1605,6 +1755,90 @@ def open_path(stage: str, rel: str) -> dict:
     return {"ok": True, "path": str(p)}
 
 
+# ----------------------------------------------------------------- exports（第 4 步的三个出口）
+TRAIN_README = """RefSync-QA 可用数据包
+======================
+
+用法：训练时只读 clips.csv 里列出的行区间。
+  - 没有修复的轨迹：从原始数据集读取（原始文件一个字节都没有改）；
+  - 修复过的轨迹：读 data/ 下的修复副本（同名、同结构的 Parquet）；
+  - meta/ 与 meta_patches.csv：修复后的元数据叠加层；
+  - quality_masks/：逐帧 frame_valid / train_keep / 样本权重；
+  - train_policy.csv：每条轨迹的去向（整段可用 / 切段 / 隔离回采）。
+
+数据：{name}
+运行：{created} · {version}
+可训练帧：{frames}
+"""
+
+
+def _zip_dir(zf, base: Path, arc_prefix: str) -> None:
+    import zipfile
+    for f in sorted(base.rglob("*")):
+        if not f.is_file():
+            continue
+        comp = zipfile.ZIP_STORED if f.suffix.lower() in (".parquet", ".png", ".jpg", ".xlsx") else zipfile.ZIP_DEFLATED
+        zf.write(f, arc_prefix + str(f.relative_to(base)), compress_type=comp)
+
+
+REVIEW_COLS = ["轨迹", "文件", "复检状态", "去向", "可训练帧", "总帧数", "问题", "问题码", "修复", "未修原因", "建议"]
+
+
+def review_rows(stage: str) -> list[dict]:
+    """复核 / 回采清单：复检后仍需复核、或被隔离 / 不可用的轨迹，每条写明问题与建议。"""
+    dict_ = code_dictionary(stage)
+    out = []
+    for ep, r in sorted(episode_rows(stage).items()):
+        final_codes = split_codes(r.get("final_issue_codes") or r.get("issue_codes"))
+        status = r.get("final_status") or r.get("status")
+        policy = r.get("train_policy") or ""
+        if status != "需复核" and policy not in ("隔离回采", "文件不可用", "处理失败"):
+            continue
+        blocking = [c for c in final_codes if (dict_.get(c) or {}).get("blocks_training") == "True"]
+        train, rows = int(fnum(r.get("train_frames"), 0) or 0), int(fnum(r.get("rows"), 0) or 0)
+        advice = ("文件损坏：重新导出或回采" if policy == "文件不可用" else
+                  "整条回采" if train == 0 else "保留训练片段；问题段人工复核或回采")
+        out.append({"轨迹": f"ep{ep:02d}", "文件": r.get("file", ""), "复检状态": status, "去向": policy,
+                    "可训练帧": train, "总帧数": rows,
+                    "问题": "；".join((dict_.get(c) or {}).get("description", c) for c in (blocking or final_codes)),
+                    "问题码": ";".join(blocking or final_codes), "修复": r.get("repair_applied") or "",
+                    "未修原因": r.get("repair_rejected") or "", "建议": advice})
+    return out
+
+
+def export_file(stage: str, what: str) -> tuple[str, bytes | Path, str]:
+    """返回 (下载文件名, 内容或文件路径, MIME)。"""
+    import zipfile
+    d = stage_dir(stage)
+    meta = run_meta(stage) or {}
+    name = re.sub(r"[^\w一-鿿.-]+", "_", (meta.get("name") or "data").replace(".parquet", ""))[:40]
+    stamp = time.strftime("%Y%m%d-%H%M", time.localtime(meta.get("ts") or time.time()))
+    if what == "review":
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=REVIEW_COLS)
+        w.writeheader()
+        w.writerows(review_rows(stage))
+        return f"RefSyncQA_复核清单_{name}_{stamp}.csv", ("﻿" + buf.getvalue()).encode("utf-8"), "text/csv; charset=utf-8"
+    if what not in ("train", "report"):
+        raise ValueError("未知的导出类型")
+    sub = d / ("governed" if what == "train" else "report")
+    if not sub.is_dir():
+        raise ValueError("这次运行没有可导出的内容")
+    label = "可用数据包" if what == "train" else "质检报告"
+    target = d / f"_export_{what}.zip"
+    if not target.exists() or target.stat().st_mtime < (d / "report" / "summary.json").stat().st_mtime:
+        tmp = target.with_suffix(".tmp")
+        with zipfile.ZipFile(tmp, "w") as zf:
+            _zip_dir(zf, sub, "")
+            if what == "train":
+                s = json.loads((d / "report" / "summary.json").read_text(encoding="utf-8"))
+                frames = ((s.get("governance") or {}).get("train_frames") or {}).get("total")
+                zf.writestr("README.txt", TRAIN_README.format(name=meta.get("name"), created=meta.get("created"),
+                                                              version=meta.get("version"), frames=frames))
+        os.replace(tmp, target)
+    return f"RefSyncQA_{label}_{name}_{stamp}.zip", target, "application/zip"
+
+
 # ----------------------------------------------------------------- HTTP
 class Handler(BaseHTTPRequestHandler):
     server_version = "RefSyncQADemo/1.0"
@@ -1629,6 +1863,21 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _download(self, fname: str, body, ctype: str):
+        size = body.stat().st_size if isinstance(body, Path) else len(body)
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(size))
+        self.send_header("Cache-Control", "no-store")
+        ascii_name = re.sub(r"[^A-Za-z0-9._-]+", "_", fname)
+        self.send_header("Content-Disposition", f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{urllib.parse.quote(fname)}")
+        self.end_headers()
+        if isinstance(body, Path):
+            with open(body, "rb") as f:
+                shutil.copyfileobj(f, self.wfile, 1 << 20)
+        else:
+            self.wfile.write(body)
 
     def _q(self):
         u = urllib.parse.urlparse(self.path)
@@ -1675,6 +1924,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(inspect_path(q.get("path", "")))
             if path == "/api/import/list":
                 return self._json(list_imports())
+            if path == "/api/sessions":
+                return self._json(sessions())
+            if path == "/api/export":
+                fname, body, ctype = export_file(self._stage(q), q.get("what", ""))
+                return self._download(fname, body, ctype)
             return self._static(path)
         except Exception as exc:  # noqa: BLE001
             traceback.print_exc()

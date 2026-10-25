@@ -2,7 +2,8 @@
 'use strict';
 /* 演示文字一致性校验：页面上每一句自动生成的结论，都要和算子这次写出的结果对得上。
    用法：先启动 server.py，然后
-     node tools/check_text.js [http://127.0.0.1:8765] [--stages detect,govern] [--runs runs]
+     node tools/check_text.js [http://127.0.0.1:8765] [--runs runs] [--stages imp-…,detect] [--no-imports]
+   默认核对全部成功的运行记录（页面上每一次检测 / 修复都是一条记录）。
    做的事：
      1. 对每个阶段、每条轨迹，拿 /api/result + /api/episode 的真实数据，跑一遍 web/logic.js 里的叙事函数
         （单条导入页 storyModel、批量页 batchDesc、实时流水 captionFor/feedFor），逐条核对：
@@ -22,7 +23,7 @@ const L = require(path.join(__dirname, '..', 'web', 'logic.js'));
 const args = process.argv.slice(2);
 const base = (args.find((a) => /^https?:/.test(a)) || 'http://127.0.0.1:8765').replace(/\/$/, '');
 const opt = (k, d) => { const i = args.indexOf('--' + k); return i >= 0 ? args[i + 1] : d; };
-const stages = opt('stages', 'detect,govern').split(',');
+const stages = opt('stages', '').split(',').filter(Boolean);
 const runsDir = path.resolve(__dirname, '..', opt('runs', 'runs'));
 
 const problems = [];
@@ -245,10 +246,11 @@ function sortObj(o) { return Object.fromEntries(Object.entries(o || {}).sort());
 
 (async () => {
   const list = [...stages];
-  if (args.includes('--imports')) {
+  if (!args.includes('--no-imports')) {
     const r = await get('/api/import/list');
-    for (const x of r.items || r.imports || r || []) if (x && x.id && x.ok !== false) list.push(x.id);
+    for (const x of r.items || []) if (x && x.id && x.status === 'ok' && !list.includes(x.id)) list.push(x.id);
   }
+  if (!list.length) { console.log('没有可核对的运行记录：先在页面上跑一次检测和修复'); return; }
   for (const s of list) await checkStage(s);
   if (!problems.length) { console.log('✓ 全部一致'); return; }
   const groups = {};
