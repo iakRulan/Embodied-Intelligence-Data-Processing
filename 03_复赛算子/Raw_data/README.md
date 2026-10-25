@@ -1,5 +1,7 @@
 # RefSync-QA v3.2 复赛算子（MoMo_Lab）
 
+> **v3.2.2（2026-10-25）**：新增噪声 / 花屏（`C_IMAGE_NOISE`）、曝光（`C_IMAGE_EXPOSURE`）、色彩通道（`C_IMAGE_COLOR`）三项画面检测，阈值逐路相机由参考集标定，见 [CHANGELOG_v3.2.2](CHANGELOG_v3.2.2.md)。
+>
 > **v3.2.1（2026-10-23）**：新增 `C_IMAGE_MOSAIC` 马赛克检测（成块色块 / 有效分辨率过低的画面不再进入训练），其余逻辑与 v3.2 相同，见 [CHANGELOG_v3.2.1](CHANGELOG_v3.2.1.md)。
 
 面向具身智能多模态训练数据（LeRobot v2.1：三路相机 PNG + 20 维 state/actions + 时间与索引字段）的**质量检测 + 安全治理**算子。

@@ -67,6 +67,35 @@ def calibrate(ref_feats: list[dict[str, Any]], opts: dict[str, Any] | None = Non
     }
     src["blur"] = "reference frame-level 0.2% quantile x (0.50/0.65/0.50)"
 
+    # --- noise / exposure / colour channel per stream (v3.2.2) ---
+    # 噪声：参考集逐帧噪声 99.9% 分位 x 3；曝光：平均亮度 [0.1% 分位 x 0.80, 99.9% 分位 x 1.15]；
+    # 色彩通道：整路判定——有颜色的帧里"偏暖（B-R < 0）"的占比，参考集最高值 x 10，且不低于 0.5
+    nz: dict[str, list[float]] = {}
+    lum: dict[str, list[float]] = {}
+    inv_share: dict[str, list[float]] = {}
+    sat_min, min_frames = 0.005, 10
+    for f in feats:
+        for col, sf in f.get("streams", {}).items():
+            if "noise" not in sf:
+                continue
+            ok = sf["decode_ok"] & ~_screen(sf, thr) & np.isfinite(sf["noise"])
+            nz.setdefault(col, []).extend(sf["noise"][ok].tolist())
+            lum.setdefault(col, []).extend(sf["mean"][ok].tolist())
+            colored = ok & (sf["satf"] >= sat_min) & np.isfinite(sf["br"])
+            if colored.sum() >= min_frames:
+                inv_share.setdefault(col, []).append(float((sf["br"][colored] < 0).mean()))
+    thr["noise"] = {col: {"max": _q(v, 0.999) * 3.0, "ref_q999": _q(v, 0.999), "ref_median": _q(v, 0.5)}
+                    for col, v in nz.items() if len(v) >= 50}
+    thr["exposure"] = {col: {"low": _q(v, 0.001) * 0.80, "high": _q(v, 0.999) * 1.15, "ref_q001": _q(v, 0.001), "ref_q999": _q(v, 0.999)}
+                       for col, v in lum.items() if len(v) >= 50}
+    thr["color"] = {col: {"inv_share_min": max(0.5, 10.0 * max(inv_share.get(col, [0.0]))), "sat_min": sat_min, "min_frames": min_frames,
+                          "ref_max_inv_share": max(inv_share.get(col, [0.0])), "ref_streams": len(inv_share.get(col, []))}
+                    for col in lum if inv_share.get(col)}
+    src["noise"] = "per stream: reference frame-level noise sigma 99.9% quantile x 3 (screen frames excluded)"
+    src["exposure"] = "per stream: mean luma outside [reference 0.1% quantile x 0.80, 99.9% quantile x 1.15]"
+    src["color"] = ("per stream (whole-stream decision): share of coloured frames (>=0.5% saturated pixels) whose saturated pixels are "
+                    "warm (mean B-R < 0) >= max(0.5, 10 x reference max share), with >= 10 coloured frames")
+
     # --- numeric steps ---
     s_steps, a_steps, sa_rmse, sa_max, sa_lags = [], [], [], [], []
     grp_max: dict[str, list[float]] = {}

@@ -123,6 +123,12 @@ def column_types(table) -> dict[str, str]:
     return out
 
 
+def _lap9(a: np.ndarray) -> np.ndarray:
+    """3x3 噪声算子 [[1,-2,1],[-2,4,-2],[1,-2,1]]：对平滑区域和直线边缘响应为 0，对独立噪声的方差放大 36 倍。"""
+    return (a[:-2, :-2] - 2 * a[:-2, 1:-1] + a[:-2, 2:] - 2 * a[1:-1, :-2] + 4 * a[1:-1, 1:-1] - 2 * a[1:-1, 2:]
+            + a[2:, :-2] - 2 * a[2:, 1:-1] + a[2:, 2:])
+
+
 def _image_metrics(raw: bytes | None) -> dict[str, Any] | None:
     if raw is None or len(raw) == 0:
         return None
@@ -139,13 +145,27 @@ def _image_metrics(raw: bytes | None) -> dict[str, Any] | None:
     # 马赛克 / 有效分辨率过低：相邻像素完全相同的比例（flat），以及有像素变化的网格线占比（grid）。
     # 低分辨率画面按最近邻放大后，块内像素完全相同、只在块边界的少数网格线上变化：flat 高、grid 低；
     # 这种画面的块边界很硬，拉普拉斯方差反而偏高，单靠清晰度指标会漏掉。
-    eqh = (rgb[:, 1:] == rgb[:, :-1]).all(axis=2)
-    eqv = (rgb[1:, :] == rgb[:-1, :]).all(axis=2)
+    r_, g_, b_ = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    # 逐通道比较再求与：结果与 (rgb[:, 1:] == rgb[:, :-1]).all(axis=2) 完全相同，速度快约 5 倍
+    eqh = (r_[:, 1:] == r_[:, :-1]) & (g_[:, 1:] == g_[:, :-1]) & (b_[:, 1:] == b_[:, :-1])
+    eqv = (r_[1:, :] == r_[:-1, :]) & (g_[1:, :] == g_[:-1, :]) & (b_[1:, :] == b_[:-1, :])
     if eqh.size and eqv.size:
         flat = float((eqh.mean() + eqv.mean()) / 2.0)
         grid = float((((~eqh).mean(axis=0) > 0.02).mean() + ((~eqv).mean(axis=1) > 0.02).mean()) / 2.0)
     else:
         flat, grid = 0.0, 1.0
+    # 噪声 / 花屏：噪声标准差的稳健估计——Immerkær 算子响应绝对值的中位数 / 0.6745 / 6
+    # （中位数不受纹理与边缘影响；独立噪声经该算子后标准差放大 6 倍）
+    if gray.shape[0] > 2 and gray.shape[1] > 2:
+        a = np.abs(_lap9(gray)).ravel()
+        k = a.size // 2
+        noise = float(np.partition(a, k)[k]) / 0.6745 / 6.0
+    else:
+        noise = float("nan")
+    # 色彩通道：饱和像素（max-min > 60）上 B-R 的均值；参考场景的主色是蓝色货架，红蓝互换后变成橙黄
+    smask = (np.maximum(np.maximum(r_, g_), b_) - np.minimum(np.minimum(r_, g_), b_)) > 60
+    satf = float(smask.mean())
+    br = float((b_ - r_)[smask].mean()) if satf >= 0.001 else float("nan")
     gx = np.diff(gray, axis=1)
     gy = np.diff(gray, axis=0)
     c = gray[1:-1, 1:-1]
@@ -164,6 +184,9 @@ def _image_metrics(raw: bytes | None) -> dict[str, Any] | None:
         lap=float(lap.var()),
         flat=flat,
         grid=grid,
+        noise=noise,
+        satf=satf,
+        br=br,
         ahash=np.packbits(small.ravel() >= float(small.mean())).tobytes().hex(),
         g64=g64,
     )
@@ -180,6 +203,7 @@ def _stream_features(values: list[Any]) -> dict[str, Any]:
         "dark": np.full(n, np.nan), "bright": np.full(n, np.nan),
         "grad": np.full(n, np.nan), "lap": np.full(n, np.nan),
         "flat": np.full(n, np.nan), "grid": np.full(n, np.nan),
+        "noise": np.full(n, np.nan), "satf": np.full(n, np.nan), "br": np.full(n, np.nan),
         "bytes": np.zeros(n),
         "motion": np.full(n, np.nan),  # mean |gray64_t - gray64_{t-1}| (previous row only)
         "path_frame": np.full(n, np.nan),
@@ -213,7 +237,7 @@ def _stream_features(values: list[Any]) -> dict[str, Any]:
             prev = None
             continue
         f["decode_ok"][i] = True
-        for k in ("w", "h", "ch", "mean", "std", "dark", "bright", "grad", "lap", "flat", "grid"):
+        for k in ("w", "h", "ch", "mean", "std", "dark", "bright", "grad", "lap", "flat", "grid", "noise", "satf", "br"):
             f[k][i] = mt[k]
         f["ahash"][i] = mt["ahash"]
         if prev is not None:

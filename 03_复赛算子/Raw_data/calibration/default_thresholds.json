@@ -546,7 +546,10 @@
     "xcam": "mode of reference best lag between the motion signals of two cameras (evidence for scene-camera re-alignment)",
     "freeze": "motion < 0.3 grey levels; run length counted in FRAMES (low-motion differences + 1) with >=50% moving rows; freeze_min_run = max(10, ceil(1.5 x longest reference run))",
     "position_envelope": "fixed engineering bound |pos| <= 1.0 (unit of the data, presumably m); NOT learned from the reference (reference observed ranges are recorded in _reference_observed_ranges)",
-    "gripper": "fixed [-0.05, 1.05] around the [0,1] normalisation implied by the reference; NOT a hardware limit"
+    "gripper": "fixed [-0.05, 1.05] around the [0,1] normalisation implied by the reference; NOT a hardware limit",
+    "noise": "per stream: reference frame-level noise sigma 99.9% quantile x 3 (screen frames excluded)",
+    "exposure": "per stream: mean luma outside [reference 0.1% quantile x 0.80, 99.9% quantile x 1.15]",
+    "color": "per stream (whole-stream decision): share of coloured frames (>=0.5% saturated pixels) whose saturated pixels are warm (mean B-R < 0) >= max(0.5, 10 x reference max share), with >= 10 coloured frames"
   },
   "_reference_episodes": 20,
   "_provenance": {
@@ -674,7 +677,68 @@
         "sha256": "2f40ee671a6e46fbb328bfea2011a3ee0f364cc511849e73f8970f3d77710b33"
       }
     ],
-    "thresholds_sha256": "4b70fc4db785da7888fa76b7d5ccf9b9fc3bf3a9e9b5a1c8f75b4383ee25d4b4",
-    "operator": "RefSync-QA-v3.2"
+    "thresholds_sha256": "1473f2ba8d7ae4c16d3a9fc69572cf444c016c81503c9aebc3a3b5ac0c8b4933",
+    "operator": "RefSync-QA-v3.2.2",
+    "note": "v3.2.2：在 v3.2 标定文件基础上只新增 noise / exposure / color 三组（同一 20 条参考集），其余阈值逐位保持不变"
+  },
+  "noise": {
+    "image": {
+      "max": 6.187659719593,
+      "ref_q999": 2.0625532398643336,
+      "ref_median": 1.1188666379272068
+    },
+    "left_wrist_image": {
+      "max": 7.412898044572042,
+      "ref_q999": 2.4709660148573476,
+      "ref_median": 1.2436398524309578
+    },
+    "right_wrist_image": {
+      "max": 6.6716085989621945,
+      "ref_q999": 2.2238695329873983,
+      "ref_median": 0.988397770290879
+    }
+  },
+  "exposure": {
+    "image": {
+      "low": 73.11904792480469,
+      "high": 135.04473555908203,
+      "ref_q001": 91.39880990600587,
+      "ref_q999": 117.43020483398438
+    },
+    "left_wrist_image": {
+      "low": 65.6352398376465,
+      "high": 147.62525893096927,
+      "ref_q001": 82.04404979705811,
+      "ref_q999": 128.3697903747559
+    },
+    "right_wrist_image": {
+      "low": 60.1893078491211,
+      "high": 158.71240756225615,
+      "ref_q001": 75.23663481140137,
+      "ref_q999": 138.01078918457057
+    }
+  },
+  "color": {
+    "image": {
+      "inv_share_min": 0.5,
+      "sat_min": 0.005,
+      "min_frames": 10,
+      "ref_max_inv_share": 0.006024096385542169,
+      "ref_streams": 20
+    },
+    "left_wrist_image": {
+      "inv_share_min": 0.5,
+      "sat_min": 0.005,
+      "min_frames": 10,
+      "ref_max_inv_share": 0.03389830508474576,
+      "ref_streams": 12
+    },
+    "right_wrist_image": {
+      "inv_share_min": 0.5,
+      "sat_min": 0.005,
+      "min_frames": 10,
+      "ref_max_inv_share": 0.01818181818181818,
+      "ref_streams": 20
+    }
   }
 }

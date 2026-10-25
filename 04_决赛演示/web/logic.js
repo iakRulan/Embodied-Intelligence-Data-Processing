@@ -66,6 +66,9 @@ const CODE_CN = {
   C_IMAGE_SCREEN: '画面黑屏、白屏或低对比度',
   C_IMAGE_BLUR: '画面模糊',
   C_IMAGE_MOSAIC: '画面成块马赛克（有效分辨率过低）',
+  C_IMAGE_NOISE: '画面噪声 / 花屏',
+  C_IMAGE_EXPOSURE: '曝光异常（过曝或欠曝）',
+  C_IMAGE_COLOR: '色彩通道异常（疑似红蓝互换）',
   C_IMAGE_DUPLICATE: '相邻帧画面重复',
   C_IMAGE_SHAPE: '图像分辨率或通道数不符',
   C_FILE_UNREADABLE: '文件无法读取',
@@ -248,12 +251,26 @@ function remainAfterFix({ finalCodes, rowFinal, blankRows, dict, shift }) {
 }
 
 // 画面类问题：落在哪一路相机、有多严重。模糊给出实测清晰度与判定下界（下界 = 参考集 0.2% 分位 × 0.5，见算子 calibrate.py）
-const IMAGE_CODE_CN = { C_IMAGE_BLUR: '模糊', C_IMAGE_MOSAIC: '马赛克', C_IMAGE_SCREEN: '黑屏 / 白屏 / 低对比度', C_IMAGE_DUPLICATE: '相邻帧画面重复', C_IMAGE_SHAPE: '分辨率或通道数不符' };
+const IMAGE_CODE_CN = { C_IMAGE_BLUR: '模糊', C_IMAGE_MOSAIC: '马赛克', C_IMAGE_SCREEN: '黑屏 / 白屏 / 低对比度', C_IMAGE_DUPLICATE: '相邻帧画面重复', C_IMAGE_SHAPE: '分辨率或通道数不符',
+  C_IMAGE_NOISE: '噪声 / 花屏', C_IMAGE_EXPOSURE: '曝光异常', C_IMAGE_COLOR: '色彩通道异常' };
+// 算子在 issue_details 里按相机写出的实测值（噪声强度 / 平均亮度 / 偏暖占比 与参考集界限），页面直接引用
+const MEASURED_CODES = new Set(['C_IMAGE_NOISE', 'C_IMAGE_EXPOSURE', 'C_IMAGE_COLOR']);
+function detailsByCode(text) {
+  const out = {};
+  for (const m of String(text || '').matchAll(/([A-Z]_[A-Z0-9_]+)\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g)) out[m[1]] = m[2];
+  return out;
+}
+function camMeasurements(details, code) {
+  return String(details[code] || '').split('；').map((s) => s.trim())
+    .map((s) => /^(image|left_wrist_image|right_wrist_image) (.+)$/.exec(s)).filter(Boolean).map((m) => [m[1], m[2]]);
+}
 function imageNotes(d, codes, dict) {
   const ie = d.image_evidence || {};
   const cams = new Set(), sents = [], evidence = [];
+  const det = detailsByCode(d.report?.issue_details);
   let mild = false;
   for (const c of codes || []) {
+    if (MEASURED_CODES.has(c)) for (const [k, v] of camMeasurements(det, c)) evidence.push([`${CAM_CN[k] || k} · ${IMAGE_CODE_CN[c]}`, v, false]);
     const x = ie[c];
     if (!x || !x.cams || !x.cams.length) continue;
     x.cams.forEach((k) => cams.add(k));

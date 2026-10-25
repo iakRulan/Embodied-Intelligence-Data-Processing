@@ -996,7 +996,8 @@ def frame_png(stage: str, ep: int, row: int, cam: str, src: str) -> bytes | None
     return b[row]
 
 
-IMAGE_CODES = ("C_IMAGE_BLUR", "C_IMAGE_MOSAIC", "C_IMAGE_SCREEN", "C_IMAGE_DUPLICATE", "C_IMAGE_SHAPE")
+IMAGE_CODES = ("C_IMAGE_BLUR", "C_IMAGE_MOSAIC", "C_IMAGE_SCREEN", "C_IMAGE_DUPLICATE", "C_IMAGE_SHAPE",
+               "C_IMAGE_NOISE", "C_IMAGE_EXPOSURE", "C_IMAGE_COLOR")
 
 
 def _sharpness(b: bytes) -> tuple[float, float] | None:

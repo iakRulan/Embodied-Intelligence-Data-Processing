@@ -73,7 +73,7 @@ def loeo(ref_root: Path) -> list[dict]:
     return rows
 
 
-def build_synthetic(ref_root: Path, base_ep: int, out_root: Path, off: int, thr: dict, cases: dict[int, dict]) -> None:
+def build_synthetic(ref_root: Path, base_ep: int, out_root: Path, off: int, thr: dict, cases: dict[int, dict], reuse: bool = False) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
@@ -100,7 +100,9 @@ def build_synthetic(ref_root: Path, base_ep: int, out_root: Path, off: int, thr:
         ep = off + k
         if "episode_index" in t.column_names and not keep_ep:
             t = put(t, "episode_index", [ep] * t.num_rows)
-        pq.write_table(t, data / f"episode_{ep:06d}.parquet")
+        dst = data / f"episode_{ep:06d}.parquet"
+        if not (reuse and dst.exists()):  # --reuse：沿用上次已写出的合成数据（数据构造是确定性的），只重算用例表
+            pq.write_table(t, dst)
         cases[ep] = {"base": base_ep, "case": k, "expect": expect, "repair": repair, "meta_len": meta_len if meta_len is not None else t.num_rows,
                      "note": note, "truth_rows": sorted(rows) if rows is not None else None, "allow": set(allow), "tasks": task_text}
 
@@ -160,6 +162,25 @@ def build_synthetic(ref_root: Path, base_ep: int, out_root: Path, off: int, thr:
         return _png(np.asarray(lo.resize((w, h), Image.Resampling.NEAREST)))
     save(36, put(base, "image", [dict(im[i], bytes=mosaic(im[i]["bytes"])) if 60 <= i < 80 else im[i] for i in range(n)]), ["C_IMAGE_MOSAIC"], "clips",
          note="主相机马赛克 20 帧（压到 1/16 分辨率再最近邻放大，类 ep08）", rows=range(60, 80), allow={"C_IMAGE_BLUR"})
+
+    # ---- v3.2.2：噪声 / 花屏、曝光、色彩通道 ----
+    def noisy(b, sigma=25.0):
+        x = _decode(b).astype(np.float64)
+        return _png(np.clip(x + rng.normal(0, sigma, x.shape), 0, 255))
+
+    def gain(b, k, add=0.0):
+        return _png(np.clip(_decode(b).astype(np.float64) * k + add, 0, 255))
+
+    def swap_rb(b):
+        return _png(_decode(b)[..., ::-1])
+    save(37, put(base, "image", [dict(im[i], bytes=noisy(im[i]["bytes"])) if 110 <= i < 130 else im[i] for i in range(n)]), ["C_IMAGE_NOISE"], "clips",
+         note="主相机彩色高斯噪声 σ=25（花屏）20 帧，类 ep22 / ep32", rows=range(110, 130))
+    save(38, put(base, "image", [dict(im[i], bytes=gain(im[i]["bytes"], 1.8, 40)) if 130 <= i < 150 else im[i] for i in range(n)]), ["C_IMAGE_EXPOSURE"], "clips",
+         note="主相机过曝 20 帧（×1.8 + 40 后截断），类 ep45", rows=range(130, 150), allow={"C_IMAGE_BLUR", "C_IMAGE_SCREEN"})
+    save(39, put(base, "image", [dict(im[i], bytes=gain(im[i]["bytes"], 0.4)) if 150 <= i < 170 else im[i] for i in range(n)]), ["C_IMAGE_EXPOSURE"], "clips",
+         note="主相机欠曝 20 帧（亮度 ×0.4）", rows=range(150, 170), allow={"C_IMAGE_BLUR"})
+    save(46, put(base, "image", [dict(im[i], bytes=swap_rb(im[i]["bytes"])) for i in range(n)]), ["C_IMAGE_COLOR"], None,
+         note="主相机整路红蓝通道互换，类 ep46")
     rw = col(base, "right_wrist_image")
     frz0 = _decode(rw[100]["bytes"]).astype(int)
     for kk, D in ((29, 15), (32, 8), (33, 30)):
@@ -224,17 +245,22 @@ def main() -> int:
     ap.add_argument("--output", required=True)
     ap.add_argument("--base-episodes", default="12,16,0")
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--part", choices=["all", "loeo", "synthetic"], default="all", help="只跑留一检验或只跑注入测试（分开跑可缩短单次耗时）")
+    ap.add_argument("--reuse", action="store_true", help="沿用输出目录里已生成的合成数据集，不重写 Parquet")
     a = ap.parse_args()
     ref_root, out = Path(a.reference), Path(a.output)
     out.mkdir(parents=True, exist_ok=True)
     bases = [int(x) for x in a.base_episodes.split(",") if x.strip()]
 
     print("== 1. reference leave-one-episode-out ==")
-    lo = loeo(ref_root)
+    lo = loeo(ref_root) if a.part in ("all", "loeo") else []
     fp = [r for r in lo if r["defect_codes"]]
     print(f"defect false positives: {len(fp)}/{len(lo)}  value hints: {sum(1 for r in lo if r['value_hints'])}/{len(lo)}")
     for r in lo:
         print("  ", r)
+    if a.part == "loeo":
+        (out / "loeo.json").write_text(json.dumps(lo, ensure_ascii=False, indent=1), encoding="utf-8")
+        return 1 if fp else 0
 
     print("== 2. synthetic faults ==")
     ref_ds = dataset.discover(ref_root)
@@ -248,13 +274,15 @@ def main() -> int:
     print(f"calibrated on {len(cal_eps)} reference episodes (bases {bases} excluded); freeze_min_run={thr['freeze_min_run']} frames")
 
     syn = out / "synthetic_dataset"
-    _safe_rmtree(syn)
-    (syn / "data" / "chunk-000").mkdir(parents=True)
-    (syn / "meta").mkdir(parents=True)
-    (syn / MARK).write_text("selftest synthetic data", encoding="utf-8")
+    reuse = a.reuse and (syn / MARK).exists()
+    if not reuse:
+        _safe_rmtree(syn)
+        (syn / "data" / "chunk-000").mkdir(parents=True)
+        (syn / "meta").mkdir(parents=True)
+        (syn / MARK).write_text("selftest synthetic data", encoding="utf-8")
     cases: dict[int, dict] = {}
     for bi, b in enumerate(bases):
-        build_synthetic(ref_root, b, syn, 1000 * (bi + 1), thr, cases)
+        build_synthetic(ref_root, b, syn, 1000 * (bi + 1), thr, cases, reuse=reuse)
     info = dict(ref_ds.info)
     info.update(total_episodes=len(cases), total_frames=int(sum(c["meta_len"] for c in cases.values())))
     (syn / "meta" / "info.json").write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -634,6 +634,9 @@ class Repairer:
             self._candidate("S_CAMERA_LAG_SUSPECT", "复核该路相机的采集时间戳", self.res.ep_codes["S_CAMERA_LAG_SUSPECT"], "单路统计证据，不自动改动")
         if "J_ROT6D_INVALID" in self.res.all_codes():
             self._candidate("J_ROT6D_INVALID", "Gram–Schmidt 重新正交化 Rotation-6D", "数学约束违反", "会改动全部相关分量，非唯一证据")
+        if "C_IMAGE_COLOR" in self.res.ep_codes:
+            self._candidate("C_IMAGE_COLOR", "整路图像交换红蓝通道（R↔B）后复检", self.res.ep_codes["C_IMAGE_COLOR"],
+                            "主色调统计证据，不能确定原始通道顺序；改动整路全部图像，需人工确认")
 
     # ------------------------------------------------------------------ run
     def run(self) -> bool:

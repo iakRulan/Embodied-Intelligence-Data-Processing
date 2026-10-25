@@ -388,6 +388,48 @@ def analyse(feats: dict[str, Any], ep_id: int, ds, thr: dict[str, Any], opts: di
         grid = sf.get("grid", np.full(n, np.nan))
         mosaic = dec & ~screen & ~shape_bad & (flat >= thr.get("mosaic_flat_min", 0.6)) & (grid <= thr.get("mosaic_grid_max", 0.5))
         R.row(mosaic, "C_IMAGE_MOSAIC", col)
+        # 噪声 / 花屏、曝光、色彩通道（v3.2.2，逐路相机参考集标定；黑白屏、分辨率异常的帧已由前面的问题码覆盖）
+        valid = dec & ~screen & ~shape_bad
+        noise_bad = np.zeros(n, bool)
+        nt = thr.get("noise", {}).get(col)
+        if nt and "noise" in sf:
+            noise_bad = valid & np.isfinite(sf["noise"]) & (sf["noise"] > nt["max"])
+            R.row(noise_bad, "C_IMAGE_NOISE", col)
+            if noise_bad.any():
+                sm["noise_median"] = float(np.nanmedian(sf["noise"][noise_bad]))
+                R.ep("C_IMAGE_NOISE", f"{col} {int(noise_bad.sum())} 帧噪声强度中位 {sm['noise_median']:.1f}（参考集上界 {nt['max']:.1f}）")
+        else:
+            R.not_evaluable.append(f"噪声检测({col} 无参考标定)")
+        et = thr.get("exposure", {}).get(col)
+        if et:
+            lum = sf["mean"]
+            over = valid & (lum > et["high"])
+            under = valid & (lum < et["low"])
+            R.row(over | under, "C_IMAGE_EXPOSURE", col)
+            if over.any():
+                sm["overexposed_frames"] = int(over.sum())
+                sm["overexposed_mean_luma"] = float(np.nanmedian(lum[over]))
+                R.ep("C_IMAGE_EXPOSURE", f"{col} {int(over.sum())} 帧过曝：平均亮度中位 {sm['overexposed_mean_luma']:.0f}（参考集上界 {et['high']:.0f}）")
+            if under.any():
+                sm["underexposed_frames"] = int(under.sum())
+                sm["underexposed_mean_luma"] = float(np.nanmedian(lum[under]))
+                R.ep("C_IMAGE_EXPOSURE", f"{col} {int(under.sum())} 帧欠曝：平均亮度中位 {sm['underexposed_mean_luma']:.0f}（参考集下界 {et['low']:.0f}）")
+        else:
+            R.not_evaluable.append(f"曝光检测({col} 无参考标定)")
+        ct = thr.get("color", {}).get(col)
+        if ct and "br" in sf:
+            ok = valid & ~noise_bad
+            colored = ok & (sf["satf"] >= ct["sat_min"]) & np.isfinite(sf["br"])
+            share = float((sf["br"][colored] < 0).mean()) if colored.any() else 0.0
+            if colored.sum() >= ct["min_frames"]:
+                sm["color_warm_share"] = round(share, 3)
+                sm["color_colored_frames"] = int(colored.sum())
+                if share >= ct["inv_share_min"]:
+                    # 通道顺序是整路属性：有颜色的帧几乎全部反相，判整路通道互换，整路不进入训练
+                    R.row(ok, "C_IMAGE_COLOR", col)
+                    R.ep("C_IMAGE_COLOR", f"{col} 有颜色的 {int(colored.sum())} 帧里 {share:.0%} 主色偏暖（参考集最多 {ct['ref_max_inv_share']:.0%}），疑似红蓝通道互换")
+        else:
+            R.not_evaluable.append(f"色彩通道检测({col} 无参考标定)")
         # frozen stream while its arm moves (solid-colour / byte-identical frames excluded)
         arm = cam_arm.get(col, None)
         if layout_ok and steps:

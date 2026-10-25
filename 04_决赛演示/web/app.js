@@ -1243,11 +1243,12 @@ function runsOf(bools) {
   return out;
 }
 
+const camText = (s) => String(s || '').replace(/\b(left_wrist_image|right_wrist_image|image)\b/g, (m) => CAM_CN[m] || m);
 function codeListHtml(codes, dict, r, ie = {}) {
   const details = {};
   for (const m of (r.issue_details || '').matchAll(/([A-Z]_[A-Z0-9_]+)\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g)) details[m[1]] = m[2];
   for (const [c, x] of Object.entries(ie || {})) if (x && x.cams && details[c] != null) details[c] += ` · ${x.cams.map((k) => `${CAM_CN[k]} ${fmt(x.frames?.[k] || 0)} 帧`).join('、')}`;
-  return `<div class="sect"><h4>问题（${codes.length}）</h4><div class="code-list">${codes.length ? codes.map((c) => `<div class="code-item"><span class="code"><i style="background:var(${CAT_VAR[catOf(c)]})"></i>${esc(codeCn(c, dict))}</span><small class="mono muted">${esc(c)}</small>${details[c] ? `<div class="ci-d">${esc(details[c])}</div>` : ''}</div>`).join('') : '<span class="muted">无问题</span>'}</div></div>`;
+  return `<div class="sect"><h4>问题（${codes.length}）</h4><div class="code-list">${codes.length ? codes.map((c) => `<div class="code-item"><span class="code"><i style="background:var(${CAT_VAR[catOf(c)]})"></i>${esc(codeCn(c, dict))}</span><small class="mono muted">${esc(c)}</small>${details[c] ? `<div class="ci-d">${esc(camText(details[c]))}</div>` : ''}</div>`).join('') : '<span class="muted">无问题</span>'}</div></div>`;
 }
 
 function peakLag(values, L) {
