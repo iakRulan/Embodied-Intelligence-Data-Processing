@@ -138,6 +138,30 @@ _IMP_LOCK = threading.Lock()
 _IMP: dict[str, dict] = {}
 
 
+def relocate(p) -> Path:
+    """运行记录里的绝对路径在本机不存在时（在另一台电脑或虚拟机里跑的，挂载点不同），
+    用路径末尾与本机目录的公共部分找回：先在演示目录的上一级找，再在演示目录里找；找不到就原样返回。
+    只认最长的、末尾至少两级的匹配，避免凭一个文件名误配。"""
+    q = Path(os.path.expanduser(str(p)))
+    if _exists(q):
+        return q
+    parts = q.parts[1:] if q.is_absolute() else q.parts
+    for anchor in (HERE.parent, HERE):
+        for i in range(len(parts) - 1):
+            cand = anchor.joinpath(*parts[i:])
+            if _exists(cand):
+                return cand
+    return q
+
+
+def _exists(p: Path) -> bool:
+    """不存在、无权限（例如别的挂载点）都当作不存在。"""
+    try:
+        return p.exists()
+    except OSError:
+        return False
+
+
 def _load_imports() -> None:
     p = IMPORTS / "index.json"
     try:
@@ -146,10 +170,17 @@ def _load_imports() -> None:
             _IMP.update(data)
     except (OSError, ValueError):
         pass
-    for rec in _IMP.values():  # a run that was interrupted by a server restart
-        if rec.get("status") == "running":
+    for iid, rec in _IMP.items():
+        if rec.get("status") == "running":  # a run that was interrupted by a server restart
             rec["status"] = "failed"
             rec["error"] = "服务重启，运行被中断"
+        # 换了机器 / 挂载点：输出目录按 id 找回，数据路径按公共后缀找回，否则这些结果在历史、回放和示例状态里都看不到
+        own = IMPORTS / iid / "out"
+        if rec.get("out") and not _exists(Path(rec["out"])) and own.is_dir():
+            rec["out"] = str(own)
+        for k in ("input", "root", "source"):
+            if rec.get(k):
+                rec[k] = str(relocate(rec[k]))
 
 
 def _save_imports() -> None:
@@ -175,7 +206,7 @@ def stage_input(stage: str) -> Path:
         try:
             s = json.loads((stage_dir(stage) / "report" / "summary.json").read_text(encoding="utf-8"))
             if s.get("input"):
-                return Path(s["input"])
+                return relocate(s["input"])
         except (OSError, ValueError):
             pass
         return Path(_IMP[stage].get("root") or _IMP[stage]["input"])
@@ -187,7 +218,10 @@ def is_govern(stage: str) -> bool:
 
 
 def has_run(stage: str) -> bool:
-    return (stage_dir(stage) / "report" / "summary.json").is_file()
+    try:
+        return (stage_dir(stage) / "report" / "summary.json").is_file()
+    except OSError:
+        return False
 
 
 # ----------------------------------------------------------------- runs grouped by input（同一份数据的检测 / 修复）
